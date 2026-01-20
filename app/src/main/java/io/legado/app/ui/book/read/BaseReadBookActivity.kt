@@ -69,6 +69,8 @@ abstract class BaseReadBookActivity :
         }
     private val selectBookFolderResult = registerForActivityResult(HandleFileContract()) {
         it.uri?.let { uri ->
+            // 保存新选择的书籍目录，这样权限才会被持久化
+            AppConfig.defaultBookTreeUri = uri.toString()
             ReadBook.book?.let { book ->
                 FileDoc.fromUri(uri, true).find(book.originName)?.let { doc ->
                     book.bookUrl = doc.uri.toString()
