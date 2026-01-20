@@ -21,21 +21,21 @@ import okhttp3.RequestBody.Companion.toRequestBody
 /**
  * Reader Server API 客户端
  * 封装与 reader3 服务器的所有 API 通信
+ * 
+ * Reader服务器认证方式：
+ * - 每个请求通过URL参数传递 accessToken（格式为 username:password）
+ * - 或者通过header传递认证信息
  */
 class ReaderServerApi(
     private val serverUrl: String,
     private val username: String,
     private val password: String
 ) {
-    private var token: String? = null
-    private var tokenExpireTime: Long = 0
-
     companion object {
         private const val TAG = "ReaderServerApi"
         private const val API_PREFIX = "/reader3"
         
         // API 端点
-        private const val API_LOGIN = "$API_PREFIX/login"
         private const val API_GET_USER_INFO = "$API_PREFIX/getUserInfo"
         private const val API_GET_BOOKSHELF = "$API_PREFIX/getBookshelf"
         private const val API_SAVE_BOOK = "$API_PREFIX/saveBook"
@@ -60,66 +60,66 @@ class ReaderServerApi(
         config.url,
         config.username,
         config.password
-    ) {
-        this.token = config.token
-        this.tokenExpireTime = config.tokenExpireTime
-    }
+    )
 
     private val baseUrl: String
         get() = serverUrl.trimEnd('/')
 
     /**
-     * 获取当前token，如果过期则自动刷新
+     * 获取认证token（格式：username:password 的 Base64 编码，或直接使用）
      */
-    private suspend fun getValidToken(): String {
-        if (token != null && tokenExpireTime > System.currentTimeMillis()) {
-            return token!!
-        }
-        login()
-        return token ?: throw NoStackTraceException("登录失败，无法获取token")
+    private fun getAccessToken(): String {
+        return "$username:$password"
     }
 
     /**
-     * 登录获取token
+     * 构建带认证参数的URL
+     */
+    private fun buildAuthUrl(endpoint: String, extraParams: Map<String, String> = emptyMap()): String {
+        val params = mutableMapOf<String, String>()
+        params["accessToken"] = getAccessToken()
+        params.putAll(extraParams)
+        
+        val queryString = params.entries.joinToString("&") { (key, value) ->
+            "${java.net.URLEncoder.encode(key, "UTF-8")}=${java.net.URLEncoder.encode(value, "UTF-8")}"
+        }
+        
+        return "$baseUrl$endpoint?$queryString"
+    }
+
+    /**
+     * 测试连接（通过获取书架来验证）
      */
     suspend fun login(): LoginResponse {
-        val url = "$baseUrl$API_LOGIN"
-        val body = GSON.toJson(mapOf(
-            "username" to username,
-            "password" to password
-        ))
+        // Reader服务器没有专门的登录接口，通过获取用户信息来验证认证
+        val url = buildAuthUrl(API_GET_BOOKSHELF)
         
         val response = okHttpClient.newCallStrResponse {
             url(url)
-            postJson(body)
         }
         
         if (!response.isSuccessful()) {
-            throw NoStackTraceException("登录请求失败: ${response.code()}")
+            throw NoStackTraceException("连接失败: ${response.code()}")
         }
         
-        val result = GSON.fromJsonObject<ApiResponse<LoginResponse>>(response.body)
-            .getOrNull() ?: throw NoStackTraceException("解析登录响应失败")
+        val result = GSON.fromJsonObject<ApiResponse<Any>>(response.body)
+            .getOrNull() ?: throw NoStackTraceException("解析响应失败")
         
         if (!result.isSuccess) {
-            throw NoStackTraceException(result.errorMsg ?: "登录失败")
+            throw NoStackTraceException(result.errorMsg ?: "认证失败")
         }
         
-        result.data?.let {
-            this.token = it.token
-            // 默认token有效期24小时
-            this.tokenExpireTime = System.currentTimeMillis() + (it.expireTime ?: 24 * 60 * 60 * 1000L)
-            return it
-        }
-        
-        throw NoStackTraceException("登录响应数据为空")
+        return LoginResponse(
+            token = getAccessToken(),
+            username = username
+        )
     }
 
     /**
      * 获取用户信息
      */
     suspend fun getUserInfo(): UserInfo {
-        val url = "$baseUrl$API_GET_USER_INFO"
+        val url = buildAuthUrl(API_GET_USER_INFO)
         val response = requestGet(url)
         
         val result = GSON.fromJsonObject<ApiResponse<UserInfo>>(response)
@@ -136,7 +136,7 @@ class ReaderServerApi(
      * 获取书架
      */
     suspend fun getBookshelf(): List<Book> {
-        val url = "$baseUrl$API_GET_BOOKSHELF"
+        val url = buildAuthUrl(API_GET_BOOKSHELF)
         val response = requestGet(url)
         
         val result = GSON.fromJsonObject<ApiResponse<List<Book>>>(response)
@@ -153,7 +153,7 @@ class ReaderServerApi(
      * 保存书籍到书架
      */
     suspend fun saveBook(book: Book): Boolean {
-        val url = "$baseUrl$API_SAVE_BOOK"
+        val url = buildAuthUrl(API_SAVE_BOOK)
         val body = GSON.toJson(book)
         val response = requestPost(url, body)
         
@@ -167,7 +167,7 @@ class ReaderServerApi(
      * 删除书籍
      */
     suspend fun deleteBook(book: Book): Boolean {
-        val url = "$baseUrl$API_DELETE_BOOK"
+        val url = buildAuthUrl(API_DELETE_BOOK)
         val body = GSON.toJson(book)
         val response = requestPost(url, body)
         
@@ -181,7 +181,7 @@ class ReaderServerApi(
      * 获取所有书源
      */
     suspend fun getBookSources(): List<BookSource> {
-        val url = "$baseUrl$API_GET_BOOK_SOURCES"
+        val url = buildAuthUrl(API_GET_BOOK_SOURCES)
         val response = requestGet(url)
         
         val result = GSON.fromJsonObject<ApiResponse<List<BookSource>>>(response)
@@ -198,7 +198,7 @@ class ReaderServerApi(
      * 保存单个书源
      */
     suspend fun saveBookSource(source: BookSource): Boolean {
-        val url = "$baseUrl$API_SAVE_BOOK_SOURCE"
+        val url = buildAuthUrl(API_SAVE_BOOK_SOURCE)
         val body = GSON.toJson(source)
         val response = requestPost(url, body)
         
@@ -212,7 +212,7 @@ class ReaderServerApi(
      * 批量保存书源
      */
     suspend fun saveBookSources(sources: List<BookSource>): Boolean {
-        val url = "$baseUrl$API_SAVE_BOOK_SOURCES"
+        val url = buildAuthUrl(API_SAVE_BOOK_SOURCES)
         val body = GSON.toJson(sources)
         val response = requestPost(url, body)
         
@@ -226,7 +226,7 @@ class ReaderServerApi(
      * 删除书源
      */
     suspend fun deleteBookSources(sources: List<BookSource>): Boolean {
-        val url = "$baseUrl$API_DELETE_BOOK_SOURCES"
+        val url = buildAuthUrl(API_DELETE_BOOK_SOURCES)
         val body = GSON.toJson(sources)
         val response = requestPost(url, body)
         
@@ -240,7 +240,7 @@ class ReaderServerApi(
      * 获取章节列表
      */
     suspend fun getChapterList(bookUrl: String): List<BookChapter> {
-        val url = "$baseUrl$API_GET_CHAPTER_LIST?url=${java.net.URLEncoder.encode(bookUrl, "UTF-8")}"
+        val url = buildAuthUrl(API_GET_CHAPTER_LIST, mapOf("url" to bookUrl))
         val response = requestGet(url)
         
         val result = GSON.fromJsonObject<ApiResponse<List<BookChapter>>>(response)
@@ -257,7 +257,7 @@ class ReaderServerApi(
      * 获取章节内容
      */
     suspend fun getBookContent(bookUrl: String, chapterIndex: Int): String {
-        val url = "$baseUrl$API_GET_BOOK_CONTENT?url=${java.net.URLEncoder.encode(bookUrl, "UTF-8")}&index=$chapterIndex"
+        val url = buildAuthUrl(API_GET_BOOK_CONTENT, mapOf("url" to bookUrl, "index" to chapterIndex.toString()))
         val response = requestGet(url)
         
         val result = GSON.fromJsonObject<ApiResponse<String>>(response)
@@ -274,7 +274,7 @@ class ReaderServerApi(
      * 保存阅读进度
      */
     suspend fun saveBookProgress(progress: BookProgress): Boolean {
-        val url = "$baseUrl$API_SAVE_BOOK_PROGRESS"
+        val url = buildAuthUrl(API_SAVE_BOOK_PROGRESS)
         val body = GSON.toJson(progress)
         val response = requestPost(url, body)
         
@@ -288,7 +288,7 @@ class ReaderServerApi(
      * 获取所有订阅源
      */
     suspend fun getRssSources(): List<RssSource> {
-        val url = "$baseUrl$API_GET_RSS_SOURCES"
+        val url = buildAuthUrl(API_GET_RSS_SOURCES)
         val response = requestGet(url)
         
         val result = GSON.fromJsonObject<ApiResponse<List<RssSource>>>(response)
@@ -305,7 +305,7 @@ class ReaderServerApi(
      * 批量保存订阅源
      */
     suspend fun saveRssSources(sources: List<RssSource>): Boolean {
-        val url = "$baseUrl$API_SAVE_RSS_SOURCES"
+        val url = buildAuthUrl(API_SAVE_RSS_SOURCES)
         val body = GSON.toJson(sources)
         val response = requestPost(url, body)
         
@@ -319,7 +319,7 @@ class ReaderServerApi(
      * 删除订阅源
      */
     suspend fun deleteRssSources(sources: List<RssSource>): Boolean {
-        val url = "$baseUrl$API_DELETE_RSS_SOURCES"
+        val url = buildAuthUrl(API_DELETE_RSS_SOURCES)
         val body = GSON.toJson(sources)
         val response = requestPost(url, body)
         
@@ -333,7 +333,7 @@ class ReaderServerApi(
      * 搜索书籍
      */
     suspend fun searchBook(key: String): List<Book> {
-        val url = "$baseUrl$API_SEARCH_BOOK"
+        val url = buildAuthUrl(API_SEARCH_BOOK)
         val body = GSON.toJson(mapOf("key" to key))
         val response = requestPost(url, body)
         
@@ -364,36 +364,18 @@ class ReaderServerApi(
      * 获取当前token信息用于保存
      */
     fun getTokenInfo(): Pair<String?, Long> {
-        return Pair(token, tokenExpireTime)
+        return Pair(getAccessToken(), System.currentTimeMillis() + 24 * 60 * 60 * 1000L)
     }
 
     /**
      * GET 请求
      */
     private suspend fun requestGet(url: String): String {
-        val token = getValidToken()
         val response = okHttpClient.newCallStrResponse {
             url(url)
-            addHeader("Authorization", "Bearer $token")
-            addHeader("accessToken", token)
         }
         
         if (!response.isSuccessful()) {
-            if (response.code() == 401) {
-                // Token 过期，清除并重试
-                this.token = null
-                this.tokenExpireTime = 0
-                val newToken = getValidToken()
-                val retryResponse = okHttpClient.newCallStrResponse {
-                    url(url)
-                    addHeader("Authorization", "Bearer $newToken")
-                    addHeader("accessToken", newToken)
-                }
-                if (!retryResponse.isSuccessful()) {
-                    throw NoStackTraceException("请求失败: ${retryResponse.code()}")
-                }
-                return retryResponse.body ?: ""
-            }
             throw NoStackTraceException("请求失败: ${response.code()}")
         }
         
@@ -404,31 +386,12 @@ class ReaderServerApi(
      * POST 请求
      */
     private suspend fun requestPost(url: String, body: String): String {
-        val token = getValidToken()
         val response = okHttpClient.newCallStrResponse {
             url(url)
-            addHeader("Authorization", "Bearer $token")
-            addHeader("accessToken", token)
             postJson(body)
         }
         
         if (!response.isSuccessful()) {
-            if (response.code() == 401) {
-                // Token 过期，清除并重试
-                this.token = null
-                this.tokenExpireTime = 0
-                val newToken = getValidToken()
-                val retryResponse = okHttpClient.newCallStrResponse {
-                    url(url)
-                    addHeader("Authorization", "Bearer $newToken")
-                    addHeader("accessToken", newToken)
-                    postJson(body)
-                }
-                if (!retryResponse.isSuccessful()) {
-                    throw NoStackTraceException("请求失败: ${retryResponse.code()}")
-                }
-                return retryResponse.body ?: ""
-            }
             throw NoStackTraceException("请求失败: ${response.code()}")
         }
         
