@@ -507,14 +507,17 @@ object ReaderServerSync {
     
     /**
      * 判断书籍是否为服务器上的本地存储书籍
+     * 服务器本地书籍的 bookUrl 格式：
+     * - storage/data/{namespace}/{bookname}_{author}/{filename} （同步后的格式）
+     * - storage/localStore/{filename} （本地书仓格式）
      */
     fun isServerLocalBook(book: Book): Boolean {
-        return book.bookUrl.startsWith("storage/localStore/")
+        return book.bookUrl.startsWith("storage/")
     }
     
     /**
      * 从服务器下载本地存储的书籍文件
-     * @param book 书籍对象，bookUrl 应该是 "storage/localStore/xxx.epub" 格式
+     * @param book 书籍对象
      * @return 下载成功后的本地 Uri
      */
     suspend fun downloadBookFile(book: Book): Result<Uri> {
@@ -524,6 +527,7 @@ object ReaderServerSync {
                     throw NoStackTraceException("网络不可用")
                 }
                 val serverApi = api ?: throw NoStackTraceException("服务器未配置")
+                val serverConfig = config ?: throw NoStackTraceException("服务器未配置")
                 
                 if (!isServerLocalBook(book)) {
                     throw NoStackTraceException("书籍不是服务器本地存储的书籍")
@@ -536,13 +540,31 @@ object ReaderServerSync {
                 }
                 
                 AppLog.put("开始从服务器下载书籍文件: ${book.name} ($fileName)")
+                AppLog.put("书籍 bookUrl: ${book.bookUrl}")
                 
-                // 从 bookUrl 中去除 "storage/localStore" 前缀，获取相对路径
-                // 服务器端会自动拼接 storage/localStore 目录
-                val relativePath = "/" + book.bookUrl.removePrefix("storage/localStore/")
+                // 根据 bookUrl 格式确定下载路径
+                val downloadPath = when {
+                    book.bookUrl.startsWith("storage/data/") -> {
+                        // storage/data/ 目录的文件通过 /epub/ 路由访问
+                        "/epub/" + book.bookUrl.removePrefix("storage/data/")
+                    }
+                    book.bookUrl.startsWith("storage/localStore/") -> {
+                        // storage/localStore/ 目录的文件通过 getLocalStoreFile API 访问
+                        "/" + book.bookUrl.removePrefix("storage/localStore/")
+                    }
+                    else -> {
+                        throw NoStackTraceException("未知的书籍路径格式: ${book.bookUrl}")
+                    }
+                }
                 
                 // 从服务器下载文件
-                val inputStream = serverApi.downloadLocalStoreFile(relativePath)
+                val inputStream = if (book.bookUrl.startsWith("storage/data/")) {
+                    // 直接通过静态路由下载
+                    serverApi.downloadFile(downloadPath)
+                } else {
+                    // 通过 getLocalStoreFile API 下载
+                    serverApi.downloadLocalStoreFile(downloadPath)
+                }
                 
                 // 保存到本地
                 val localUri = LocalBook.saveBookFile(inputStream, fileName)

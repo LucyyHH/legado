@@ -399,14 +399,31 @@ class ReaderServerApi(
     }
 
     /**
-     * 下载本地存储的书籍文件
-     * @param path 文件路径，如 "storage/localStore/xxx.epub"
+     * 下载本地存储的书籍文件（通过 getLocalStoreFile API）
+     * @param path 文件相对路径，如 "/xxx.epub"
      * @return 文件的 InputStream
      */
     suspend fun downloadLocalStoreFile(path: String): InputStream {
         val url = buildAuthUrl(API_GET_LOCAL_STORE_FILE, mapOf("path" to path))
         
-        AppLog.put("ReaderServerApi: 下载文件 $path")
+        AppLog.put("ReaderServerApi: 通过 API 下载文件 $path")
+        
+        val responseBody = okHttpClient.newCallResponseBody {
+            url(url)
+        }
+        
+        return responseBody.byteStream()
+    }
+    
+    /**
+     * 直接下载文件（通过静态路由）
+     * @param path 文件路径，如 "/epub/xxx/book.epub"
+     * @return 文件的 InputStream
+     */
+    suspend fun downloadFile(path: String): InputStream {
+        val url = "$baseUrl$path"
+        
+        AppLog.put("ReaderServerApi: 直接下载文件 $url")
         
         val responseBody = okHttpClient.newCallResponseBody {
             url(url)
