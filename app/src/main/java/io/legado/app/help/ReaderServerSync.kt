@@ -537,8 +537,12 @@ object ReaderServerSync {
                 
                 AppLog.put("开始从服务器下载书籍文件: ${book.name} ($fileName)")
                 
+                // 从 bookUrl 中去除 "storage/localStore" 前缀，获取相对路径
+                // 服务器端会自动拼接 storage/localStore 目录
+                val relativePath = "/" + book.bookUrl.removePrefix("storage/localStore/")
+                
                 // 从服务器下载文件
-                val inputStream = serverApi.downloadLocalStoreFile(book.bookUrl)
+                val inputStream = serverApi.downloadLocalStoreFile(relativePath)
                 
                 // 保存到本地
                 val localUri = LocalBook.saveBookFile(inputStream, fileName)
