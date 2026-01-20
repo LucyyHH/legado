@@ -16,6 +16,7 @@ import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.BookProgress
 import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.AppWebDav
+import io.legado.app.help.ReaderServerSync
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.ContentProcessor
 import io.legado.app.help.book.isLocal
@@ -256,6 +257,25 @@ class ReadBookViewModel(application: Application) : BaseViewModel(application) {
             } else if (progress.durChapterIndex < book.simulatedTotalChapterNum()) {
                 ReadBook.setProgress(progress)
                 AppLog.put("自动同步阅读进度成功《${book.name}》 ${progress.durChapterTitle}")
+            }
+        }
+    }
+
+    /**
+     * 上传阅读进度到 Reader Server
+     */
+    fun uploadProgressToReaderServer(book: Book) {
+        if (!AppConfig.readerServerSyncProgress || !AppConfig.readerServerConfigured) return
+        execute {
+            ReaderServerSync.initConfig()
+            ReaderServerSync.uploadBookProgress(book)
+        }.onError {
+            AppLog.put("上传阅读进度到Reader Server失败《${book.name}》\n${it.localizedMessage}", it)
+        }.onSuccess { result ->
+            result.onSuccess { success ->
+                if (success) {
+                    AppLog.put("上传阅读进度到Reader Server成功《${book.name}》")
+                }
             }
         }
     }

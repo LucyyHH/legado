@@ -19,6 +19,7 @@ import io.legado.app.constant.AppLog
 import io.legado.app.constant.PreferKey
 import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.AppWebDav
+import io.legado.app.help.ReaderServerSync
 import io.legado.app.help.config.AppConfig
 import io.legado.app.help.config.LocalConfig
 import io.legado.app.help.coroutine.Coroutine
@@ -108,6 +109,20 @@ class BackupConfigFragment : PreferenceFragment(),
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         addPreferencesFromResource(R.xml.pref_config_backup)
+        
+        // Reader Server 配置
+        findPreference<EditTextPreference>(PreferKey.readerServerPassword)?.let {
+            it.setOnBindEditTextListener { editText ->
+                editText.inputType =
+                    InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_CLASS_TEXT
+                editText.setSelection(editText.text.length)
+            }
+        }
+        upPreferenceSummary(PreferKey.readerServerUrl, getPrefString(PreferKey.readerServerUrl))
+        upPreferenceSummary(PreferKey.readerServerUsername, getPrefString(PreferKey.readerServerUsername))
+        upPreferenceSummary(PreferKey.readerServerPassword, getPrefString(PreferKey.readerServerPassword))
+        
+        // WebDAV 配置
         findPreference<EditTextPreference>(PreferKey.webDavPassword)?.let {
             it.setOnBindEditTextListener { editText ->
                 editText.inputType =
@@ -185,12 +200,43 @@ class BackupConfigFragment : PreferenceFragment(),
             }
 
             PreferKey.webDavDeviceName -> upPreferenceSummary(key, getPrefString(key))
+            
+            // Reader Server 配置变更
+            PreferKey.readerServerUrl,
+            PreferKey.readerServerUsername,
+            PreferKey.readerServerPassword -> listView.post {
+                upPreferenceSummary(key, appCtx.getPrefString(key))
+                viewModel.upReaderServerConfig()
+            }
         }
     }
 
     private fun upPreferenceSummary(preferenceKey: String, value: String?) {
         val preference = findPreference<Preference>(preferenceKey) ?: return
         when (preferenceKey) {
+            // Reader Server
+            PreferKey.readerServerUrl ->
+                if (value.isNullOrBlank()) {
+                    preference.summary = getString(R.string.reader_server_url_s)
+                } else {
+                    preference.summary = value
+                }
+
+            PreferKey.readerServerUsername ->
+                if (value.isNullOrBlank()) {
+                    preference.summary = getString(R.string.reader_server_username_s)
+                } else {
+                    preference.summary = value
+                }
+
+            PreferKey.readerServerPassword ->
+                if (value.isNullOrEmpty()) {
+                    preference.summary = getString(R.string.reader_server_password_s)
+                } else {
+                    preference.summary = "*".repeat(value.length)
+                }
+
+            // WebDAV
             PreferKey.webDavUrl ->
                 if (value.isNullOrBlank()) {
                     preference.summary = getString(R.string.web_dav_url_s)
@@ -236,6 +282,8 @@ class BackupConfigFragment : PreferenceFragment(),
             "web_dav_backup" -> backup()
             "web_dav_restore" -> restore()
             "import_old" -> restoreOld.launch()
+            "reader_server_test" -> testReaderServerConnection()
+            "reader_server_sync_now" -> syncReaderServerNow()
         }
         return super.onPreferenceTreeClick(preference)
     }
@@ -389,6 +437,87 @@ class BackupConfigFragment : PreferenceFragment(),
             title = getString(R.string.select_restore_file)
             mode = HandleFileContract.FILE
             allowExtensions = arrayOf("zip")
+        }
+    }
+
+    /**
+     * 测试 Reader Server 连接
+     */
+    private fun testReaderServerConnection() {
+        if (!AppConfig.readerServerConfigured) {
+            appCtx.toastOnUi(R.string.reader_server_not_configured)
+            return
+        }
+        waitDialog.setText(R.string.testing_connection)
+        waitDialog.show()
+        lifecycleScope.launch {
+            try {
+                withContext(IO) {
+                    ReaderServerSync.initConfig()
+                }
+                val result = withContext(IO) {
+                    ReaderServerSync.testConnection()
+                }
+                result.onSuccess { success ->
+                    if (success) {
+                        appCtx.toastOnUi(R.string.reader_server_connect_success)
+                    } else {
+                        appCtx.toastOnUi(R.string.reader_server_connect_fail)
+                    }
+                }.onFailure { e ->
+                    AppLog.put("Reader Server 连接测试失败: ${e.localizedMessage}", e)
+                    appCtx.toastOnUi(getString(R.string.reader_server_connect_fail) + "\n${e.localizedMessage}")
+                }
+            } catch (e: Exception) {
+                AppLog.put("Reader Server 连接测试失败: ${e.localizedMessage}", e)
+                appCtx.toastOnUi(getString(R.string.reader_server_connect_fail) + "\n${e.localizedMessage}")
+            } finally {
+                waitDialog.dismiss()
+            }
+        }
+    }
+
+    /**
+     * 立即同步 Reader Server
+     */
+    private fun syncReaderServerNow() {
+        if (!AppConfig.readerServerConfigured) {
+            appCtx.toastOnUi(R.string.reader_server_not_configured)
+            return
+        }
+        waitDialog.setText(R.string.syncing)
+        waitDialog.show()
+        lifecycleScope.launch {
+            try {
+                withContext(IO) {
+                    ReaderServerSync.initConfig()
+                }
+                val result = withContext(IO) {
+                    ReaderServerSync.syncAll()
+                }
+                result.onSuccess { results ->
+                    val summary = buildString {
+                        results["bookSource"]?.let {
+                            appendLine("书源: ${it}")
+                        }
+                        results["bookshelf"]?.let {
+                            appendLine("书架: ${it}")
+                        }
+                        results["rssSource"]?.let {
+                            appendLine("订阅源: ${it}")
+                        }
+                    }
+                    appCtx.toastOnUi(getString(R.string.reader_server_sync_success) + "\n$summary")
+                }.onFailure { e ->
+                    AppLog.put("Reader Server 同步失败: ${e.localizedMessage}", e)
+                    appCtx.toastOnUi(getString(R.string.reader_server_sync_fail) + "\n${e.localizedMessage}")
+                }
+            } catch (e: Exception) {
+                AppLog.put("Reader Server 同步失败: ${e.localizedMessage}", e)
+                appCtx.toastOnUi(getString(R.string.reader_server_sync_fail) + "\n${e.localizedMessage}")
+            } finally {
+                waitDialog.dismiss()
+            }
         }
     }
 

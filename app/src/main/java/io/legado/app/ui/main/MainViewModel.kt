@@ -14,6 +14,7 @@ import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookSource
 import io.legado.app.help.AppWebDav
 import io.legado.app.help.DefaultData
+import io.legado.app.help.ReaderServerSync
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.addType
 import io.legado.app.help.book.isLocal
@@ -89,7 +90,39 @@ class MainViewModel(application: Application) : BaseViewModel(application) {
 
     fun upAllBookToc() {
         execute {
+            // 如果启用了自动同步，先与Reader Server同步
+            if (AppConfig.readerServerAutoSync && AppConfig.readerServerConfigured) {
+                syncWithReaderServer()
+            }
             addToWaitUp(appDb.bookDao.hasUpdateBooks)
+        }
+    }
+
+    /**
+     * 与 Reader Server 同步数据
+     */
+    fun syncWithReaderServer() {
+        if (!AppConfig.readerServerConfigured) return
+        execute {
+            kotlin.runCatching {
+                ReaderServerSync.initConfig()
+                if (ReaderServerSync.isOk) {
+                    // 同步书架
+                    if (AppConfig.readerServerSyncBookshelf) {
+                        ReaderServerSync.syncBookshelf().onFailure {
+                            AppLog.put("Reader Server 书架同步失败: ${it.localizedMessage}", it)
+                        }
+                    }
+                    // 同步书源
+                    if (AppConfig.readerServerSyncBookSource) {
+                        ReaderServerSync.syncBookSources().onFailure {
+                            AppLog.put("Reader Server 书源同步失败: ${it.localizedMessage}", it)
+                        }
+                    }
+                }
+            }.onFailure {
+                AppLog.put("Reader Server 同步失败: ${it.localizedMessage}", it)
+            }
         }
     }
 

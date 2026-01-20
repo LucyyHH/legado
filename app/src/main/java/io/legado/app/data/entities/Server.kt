@@ -23,7 +23,8 @@ data class Server(
 ) : Parcelable {
 
     enum class TYPE {
-        WEBDAV
+        WEBDAV,
+        READER_SERVER
     }
 
     override fun hashCode(): Int {
@@ -47,11 +48,28 @@ data class Server(
         return if (type == TYPE.WEBDAV) GSON.fromJsonObject<WebDavConfig>(config).getOrNull() else null
     }
 
+    fun getReaderServerConfig(): ReaderServerConfig? {
+        return if (type == TYPE.READER_SERVER) GSON.fromJsonObject<ReaderServerConfig>(config).getOrNull() else null
+    }
+
     @Parcelize
     data class WebDavConfig(
         var url: String,
         var username: String,
         var password: String
+    ) : Parcelable
+
+    @Parcelize
+    data class ReaderServerConfig(
+        var url: String,
+        var username: String,
+        var password: String,
+        var token: String? = null,
+        var tokenExpireTime: Long = 0,
+        var syncBookSource: Boolean = true,
+        var syncBookshelf: Boolean = true,
+        var syncBookProgress: Boolean = true,
+        var syncRssSource: Boolean = true
     ) : Parcelable
 
 }

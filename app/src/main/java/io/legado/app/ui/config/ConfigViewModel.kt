@@ -6,6 +6,7 @@ import io.legado.app.R
 import io.legado.app.base.BaseViewModel
 import io.legado.app.data.appDb
 import io.legado.app.help.AppWebDav
+import io.legado.app.help.ReaderServerSync
 import io.legado.app.help.book.BookHelp
 import io.legado.app.utils.FileUtils
 import io.legado.app.utils.restart
@@ -18,6 +19,12 @@ class ConfigViewModel(application: Application) : BaseViewModel(application) {
     fun upWebDavConfig() {
         execute {
             AppWebDav.upConfig()
+        }
+    }
+
+    fun upReaderServerConfig() {
+        execute {
+            ReaderServerSync.initConfig()
         }
     }
 

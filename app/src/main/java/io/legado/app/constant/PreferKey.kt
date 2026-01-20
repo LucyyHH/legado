@@ -186,4 +186,16 @@ object PreferKey {
     const val showReadTitleAddition = "showReadTitleAddition"
     const val readBarStyleFollowPage = "readBarStyleFollowPage"
     const val contentSelectSpeakMod = "contentReadAloudMod"
+    
+    // Reader Server 配置
+    const val readerServerUrl = "readerServerUrl"
+    const val readerServerUsername = "readerServerUsername"
+    const val readerServerPassword = "readerServerPassword"
+    const val readerServerToken = "readerServerToken"
+    const val readerServerTokenExpire = "readerServerTokenExpire"
+    const val readerServerSyncBookSource = "readerServerSyncBookSource"
+    const val readerServerSyncBookshelf = "readerServerSyncBookshelf"
+    const val readerServerSyncProgress = "readerServerSyncProgress"
+    const val readerServerSyncRssSource = "readerServerSyncRssSource"
+    const val readerServerAutoSync = "readerServerAutoSync"
 }

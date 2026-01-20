@@ -608,6 +608,37 @@
     <string name="web_dav_url">WebDav server address</string>
     <string name="web_dav_account">WebDav account</string>
     <string name="web_dav_account_s">Input your WebDav account</string>
+    
+    <!-- Reader Server -->
+    <string name="reader_server_set">阅读服务器设置</string>
+    <string name="reader_server_url">服务器地址</string>
+    <string name="reader_server_url_s">请输入Reader服务器地址，如 http://192.168.1.100:8080</string>
+    <string name="reader_server_username">用户名</string>
+    <string name="reader_server_username_s">请输入Reader服务器用户名</string>
+    <string name="reader_server_password">密码</string>
+    <string name="reader_server_password_s">请输入Reader服务器密码</string>
+    <string name="reader_server_test">测试连接</string>
+    <string name="reader_server_test_s">测试与服务器的连接是否正常</string>
+    <string name="reader_server_sync_book_source">同步书源</string>
+    <string name="reader_server_sync_book_source_s">与服务器双向同步书源数据</string>
+    <string name="reader_server_sync_bookshelf">同步书架</string>
+    <string name="reader_server_sync_bookshelf_s">与服务器双向同步书架数据</string>
+    <string name="reader_server_sync_progress">同步阅读进度</string>
+    <string name="reader_server_sync_progress_s">与服务器同步阅读进度</string>
+    <string name="reader_server_sync_rss_source">同步订阅源</string>
+    <string name="reader_server_sync_rss_source_s">与服务器双向同步RSS订阅源</string>
+    <string name="reader_server_auto_sync">自动同步</string>
+    <string name="reader_server_auto_sync_s">刷新书架时自动与服务器同步</string>
+    <string name="reader_server_sync_now">立即同步</string>
+    <string name="reader_server_sync_now_s">立即与服务器进行全量数据同步</string>
+    <string name="reader_server_connect_success">连接成功</string>
+    <string name="reader_server_connect_fail">连接失败</string>
+    <string name="reader_server_sync_success">同步成功</string>
+    <string name="reader_server_sync_fail">同步失败</string>
+    <string name="reader_server_not_configured">请先配置Reader服务器</string>
+    <string name="testing_connection">正在测试连接…</string>
+    <string name="syncing">正在同步…</string>
+    
     <string name="rss_source">RSS source</string>
     <string name="rss_source_edit">Edit RSS source</string>
     <string name="screen">Filter</string>

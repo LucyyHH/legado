@@ -10,6 +10,7 @@ import io.legado.app.data.entities.BookProgress
 import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.ReadRecord
 import io.legado.app.help.AppWebDav
+import io.legado.app.help.ReaderServerSync
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.ContentProcessor
 import io.legado.app.help.book.isImage
@@ -235,8 +236,18 @@ object ReadBook : CoroutineScope by MainScope() {
     fun uploadProgress(toast: Boolean = false, successAction: (() -> Unit)? = null) {
         book?.let {
             launch(IO) {
+                // 上传到 WebDAV
                 AppWebDav.uploadBookProgress(it, toast) {
                     successAction?.invoke()
+                }
+                // 上传到 Reader Server
+                if (AppConfig.readerServerSyncProgress && AppConfig.readerServerConfigured) {
+                    kotlin.runCatching {
+                        ReaderServerSync.initConfig()
+                        ReaderServerSync.uploadBookProgress(it)
+                    }.onFailure { e ->
+                        AppLog.put("上传阅读进度到Reader Server失败: ${e.localizedMessage}", e)
+                    }
                 }
                 ensureActive()
                 it.update()

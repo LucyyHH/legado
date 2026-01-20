@@ -738,5 +738,57 @@ object AppConfig : SharedPreferences.OnSharedPreferenceChangeListener {
             appCtx.putPrefBoolean(PreferKey.welcomeShowIconDark, value)
         }
 
+    // Reader Server 配置
+    var readerServerUrl: String?
+        get() = appCtx.getPrefString(PreferKey.readerServerUrl)
+        set(value) {
+            appCtx.putPrefString(PreferKey.readerServerUrl, value)
+        }
+
+    var readerServerUsername: String?
+        get() = appCtx.getPrefString(PreferKey.readerServerUsername)
+        set(value) {
+            appCtx.putPrefString(PreferKey.readerServerUsername, value)
+        }
+
+    var readerServerPassword: String?
+        get() = appCtx.getPrefString(PreferKey.readerServerPassword)
+        set(value) {
+            appCtx.putPrefString(PreferKey.readerServerPassword, value)
+        }
+
+    var readerServerSyncBookSource: Boolean
+        get() = appCtx.getPrefBoolean(PreferKey.readerServerSyncBookSource, true)
+        set(value) {
+            appCtx.putPrefBoolean(PreferKey.readerServerSyncBookSource, value)
+        }
+
+    var readerServerSyncBookshelf: Boolean
+        get() = appCtx.getPrefBoolean(PreferKey.readerServerSyncBookshelf, true)
+        set(value) {
+            appCtx.putPrefBoolean(PreferKey.readerServerSyncBookshelf, value)
+        }
+
+    var readerServerSyncProgress: Boolean
+        get() = appCtx.getPrefBoolean(PreferKey.readerServerSyncProgress, true)
+        set(value) {
+            appCtx.putPrefBoolean(PreferKey.readerServerSyncProgress, value)
+        }
+
+    var readerServerSyncRssSource: Boolean
+        get() = appCtx.getPrefBoolean(PreferKey.readerServerSyncRssSource, true)
+        set(value) {
+            appCtx.putPrefBoolean(PreferKey.readerServerSyncRssSource, value)
+        }
+
+    var readerServerAutoSync: Boolean
+        get() = appCtx.getPrefBoolean(PreferKey.readerServerAutoSync, false)
+        set(value) {
+            appCtx.putPrefBoolean(PreferKey.readerServerAutoSync, value)
+        }
+
+    val readerServerConfigured: Boolean
+        get() = !readerServerUrl.isNullOrBlank() && !readerServerUsername.isNullOrBlank()
+
 }
 

@@ -3,6 +3,80 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <io.legado.app.lib.prefs.PreferenceCategory
+        android:title="@string/reader_server_set"
+        app:allowDividerAbove="false"
+        app:allowDividerBelow="false"
+        app:iconSpaceReserved="false"
+        app:layout="@layout/view_preference_category">
+
+        <io.legado.app.lib.prefs.EditTextPreference
+            android:key="readerServerUrl"
+            android:summary="@string/reader_server_url_s"
+            android:title="@string/reader_server_url"
+            app:iconSpaceReserved="false" />
+
+        <io.legado.app.lib.prefs.EditTextPreference
+            android:key="readerServerUsername"
+            android:summary="@string/reader_server_username_s"
+            android:title="@string/reader_server_username"
+            app:iconSpaceReserved="false" />
+
+        <io.legado.app.lib.prefs.EditTextPreference
+            android:key="readerServerPassword"
+            android:summary="@string/reader_server_password_s"
+            android:title="@string/reader_server_password"
+            app:iconSpaceReserved="false" />
+
+        <io.legado.app.lib.prefs.Preference
+            android:key="reader_server_test"
+            android:summary="@string/reader_server_test_s"
+            android:title="@string/reader_server_test"
+            app:iconSpaceReserved="false" />
+
+        <io.legado.app.lib.prefs.SwitchPreference
+            android:defaultValue="true"
+            android:key="readerServerSyncBookSource"
+            android:summary="@string/reader_server_sync_book_source_s"
+            android:title="@string/reader_server_sync_book_source"
+            app:iconSpaceReserved="false" />
+
+        <io.legado.app.lib.prefs.SwitchPreference
+            android:defaultValue="true"
+            android:key="readerServerSyncBookshelf"
+            android:summary="@string/reader_server_sync_bookshelf_s"
+            android:title="@string/reader_server_sync_bookshelf"
+            app:iconSpaceReserved="false" />
+
+        <io.legado.app.lib.prefs.SwitchPreference
+            android:defaultValue="true"
+            android:key="readerServerSyncProgress"
+            android:summary="@string/reader_server_sync_progress_s"
+            android:title="@string/reader_server_sync_progress"
+            app:iconSpaceReserved="false" />
+
+        <io.legado.app.lib.prefs.SwitchPreference
+            android:defaultValue="true"
+            android:key="readerServerSyncRssSource"
+            android:summary="@string/reader_server_sync_rss_source_s"
+            android:title="@string/reader_server_sync_rss_source"
+            app:iconSpaceReserved="false" />
+
+        <io.legado.app.lib.prefs.SwitchPreference
+            android:defaultValue="false"
+            android:key="readerServerAutoSync"
+            android:summary="@string/reader_server_auto_sync_s"
+            android:title="@string/reader_server_auto_sync"
+            app:iconSpaceReserved="false" />
+
+        <io.legado.app.lib.prefs.Preference
+            android:key="reader_server_sync_now"
+            android:summary="@string/reader_server_sync_now_s"
+            android:title="@string/reader_server_sync_now"
+            app:iconSpaceReserved="false" />
+
+    </io.legado.app.lib.prefs.PreferenceCategory>
+
+    <io.legado.app.lib.prefs.PreferenceCategory
         android:title="@string/web_dav_set"
         app:allowDividerAbove="false"
         app:allowDividerBelow="false"
