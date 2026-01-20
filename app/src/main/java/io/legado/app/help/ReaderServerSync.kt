@@ -67,7 +67,12 @@ object ReaderServerSync {
                     )
                     
                     config = serverConfig
-                    api = ReaderServerApi(serverConfig)
+                    val serverApi = ReaderServerApi(serverConfig)
+                    // 如果有保存的 token，恢复到 API 实例
+                    if (!savedToken.isNullOrBlank() && tokenExpireTime > System.currentTimeMillis()) {
+                        serverApi.setAccessToken(savedToken, tokenExpireTime)
+                    }
+                    api = serverApi
                 }
             }.onFailure {
                 AppLog.put("初始化 Reader Server 配置失败: ${it.message}", it)
@@ -118,13 +123,15 @@ object ReaderServerSync {
                     throw NoStackTraceException("网络不可用")
                 }
                 val serverApi = api ?: throw NoStackTraceException("服务器未配置")
-                val result = serverApi.testConnection()
-                if (result) {
-                    // 保存token
-                    val (token, expireTime) = serverApi.getTokenInfo()
-                    saveTokenInfo(token, expireTime)
-                }
-                result
+                
+                // testConnection 会抛出详细异常
+                serverApi.testConnection()
+                
+                // 登录成功后保存token
+                val (token, expireTime) = serverApi.getTokenInfo()
+                saveTokenInfo(token, expireTime)
+                
+                true
             }
         }
     }

@@ -23,8 +23,10 @@ import okhttp3.RequestBody.Companion.toRequestBody
  * 封装与 reader3 服务器的所有 API 通信
  * 
  * Reader服务器认证方式：
- * - 每个请求通过URL参数传递 accessToken（格式为 username:password）
- * - 或者通过header传递认证信息
+ * 1. 首先调用 /reader3/login 接口进行登录，获取 accessToken
+ * 2. 登录请求需要 POST JSON: {"username": "xxx", "password": "xxx", "isLogin": true}
+ * 3. 登录成功后返回 accessToken（格式为 username:token）
+ * 4. 后续请求通过 URL 参数传递 accessToken
  */
 class ReaderServerApi(
     private val serverUrl: String,
@@ -36,6 +38,7 @@ class ReaderServerApi(
         private const val API_PREFIX = "/reader3"
         
         // API 端点
+        private const val API_LOGIN = "$API_PREFIX/login"
         private const val API_GET_USER_INFO = "$API_PREFIX/getUserInfo"
         private const val API_GET_BOOKSHELF = "$API_PREFIX/getBookshelf"
         private const val API_SAVE_BOOK = "$API_PREFIX/saveBook"
@@ -53,6 +56,10 @@ class ReaderServerApi(
         private const val API_SEARCH_BOOK = "$API_PREFIX/searchBook"
     }
 
+    // 缓存的 accessToken（格式：username:token）
+    private var cachedAccessToken: String? = null
+    private var tokenExpireTime: Long = 0L
+
     /**
      * 从配置创建API实例
      */
@@ -66,18 +73,35 @@ class ReaderServerApi(
         get() = serverUrl.trimEnd('/')
 
     /**
-     * 获取认证token（格式：username:password 的 Base64 编码，或直接使用）
+     * 获取有效的 accessToken
+     * 如果缓存的 token 已过期或不存在，会自动进行登录
      */
-    private fun getAccessToken(): String {
-        return "$username:$password"
+    private suspend fun getValidAccessToken(): String {
+        // 检查缓存的 token 是否有效
+        val cached = cachedAccessToken
+        if (cached != null && System.currentTimeMillis() < tokenExpireTime) {
+            return cached
+        }
+        
+        // 需要重新登录获取 token
+        val loginResult = performLogin()
+        return loginResult.accessToken ?: throw NoStackTraceException("登录失败：未获取到 accessToken")
+    }
+
+    /**
+     * 设置已有的 accessToken（从存储恢复）
+     */
+    fun setAccessToken(token: String?, expireTime: Long) {
+        cachedAccessToken = token
+        tokenExpireTime = expireTime
     }
 
     /**
      * 构建带认证参数的URL
      */
-    private fun buildAuthUrl(endpoint: String, extraParams: Map<String, String> = emptyMap()): String {
+    private suspend fun buildAuthUrl(endpoint: String, extraParams: Map<String, String> = emptyMap()): String {
         val params = mutableMapOf<String, String>()
-        params["accessToken"] = getAccessToken()
+        params["accessToken"] = getValidAccessToken()
         params.putAll(extraParams)
         
         val queryString = params.entries.joinToString("&") { (key, value) ->
@@ -88,30 +112,54 @@ class ReaderServerApi(
     }
 
     /**
-     * 测试连接（通过获取书架来验证）
+     * 执行登录请求
      */
-    suspend fun login(): LoginResponse {
-        // Reader服务器没有专门的登录接口，通过获取用户信息来验证认证
-        val url = buildAuthUrl(API_GET_BOOKSHELF)
+    private suspend fun performLogin(): LoginResult {
+        val url = "$baseUrl$API_LOGIN"
+        val loginBody = GSON.toJson(mapOf(
+            "username" to username,
+            "password" to password,
+            "isLogin" to true  // 关键：设置为 true 表示登录，false 表示注册
+        ))
+        
+        AppLog.put("ReaderServerApi: 正在登录 $url")
         
         val response = okHttpClient.newCallStrResponse {
             url(url)
+            postJson(loginBody)
         }
         
         if (!response.isSuccessful()) {
-            throw NoStackTraceException("连接失败: ${response.code()}")
+            throw NoStackTraceException("登录请求失败: HTTP ${response.code()}")
         }
         
-        val result = GSON.fromJsonObject<ApiResponse<Any>>(response.body)
-            .getOrNull() ?: throw NoStackTraceException("解析响应失败")
+        val result = GSON.fromJsonObject<ApiResponse<LoginResult>>(response.body)
+            .getOrNull() ?: throw NoStackTraceException("解析登录响应失败")
         
         if (!result.isSuccess) {
-            throw NoStackTraceException(result.errorMsg ?: "认证失败")
+            throw NoStackTraceException(result.errorMsg ?: "登录失败")
         }
         
+        val loginResult = result.data ?: throw NoStackTraceException("登录响应数据为空")
+        
+        // 缓存 token，设置7天有效期
+        cachedAccessToken = loginResult.accessToken
+        tokenExpireTime = System.currentTimeMillis() + 7 * 24 * 60 * 60 * 1000L
+        
+        AppLog.put("ReaderServerApi: 登录成功，用户: ${loginResult.username}")
+        
+        return loginResult
+    }
+
+    /**
+     * 登录并返回响应（供外部调用）
+     */
+    suspend fun login(): LoginResponse {
+        val result = performLogin()
         return LoginResponse(
-            token = getAccessToken(),
-            username = username
+            token = result.accessToken,
+            expireTime = tokenExpireTime,
+            username = result.username
         )
     }
 
@@ -348,15 +396,18 @@ class ReaderServerApi(
     }
 
     /**
-     * 测试连接
+     * 测试连接（通过登录验证）
      */
     suspend fun testConnection(): Boolean {
         return try {
+            // 清除缓存的 token，强制重新登录
+            cachedAccessToken = null
+            tokenExpireTime = 0L
             login()
             true
         } catch (e: Exception) {
             AppLog.put("Reader Server 连接测试失败: ${e.message}", e)
-            false
+            throw e  // 重新抛出异常，让调用者获取详细错误信息
         }
     }
 
@@ -364,7 +415,7 @@ class ReaderServerApi(
      * 获取当前token信息用于保存
      */
     fun getTokenInfo(): Pair<String?, Long> {
-        return Pair(getAccessToken(), System.currentTimeMillis() + 24 * 60 * 60 * 1000L)
+        return Pair(cachedAccessToken, tokenExpireTime)
     }
 
     /**
@@ -409,7 +460,20 @@ class ReaderServerApi(
     )
 
     /**
-     * 登录响应
+     * 登录结果（服务器返回的数据）
+     */
+    @Keep
+    data class LoginResult(
+        val username: String? = null,
+        val accessToken: String? = null,
+        val lastLoginAt: Long? = null,
+        val enableWebdav: Boolean = false,
+        val enableLocalStore: Boolean = false,
+        val createdAt: Long? = null
+    )
+
+    /**
+     * 登录响应（供外部使用）
      */
     @Keep
     data class LoginResponse(
