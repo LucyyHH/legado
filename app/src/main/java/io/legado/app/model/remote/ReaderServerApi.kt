@@ -9,9 +9,11 @@ import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.RssSource
 import io.legado.app.data.entities.Server
 import io.legado.app.exception.NoStackTraceException
+import io.legado.app.help.http.newCallResponseBody
 import io.legado.app.help.http.newCallStrResponse
 import io.legado.app.help.http.okHttpClient
 import io.legado.app.help.http.postJson
+import java.io.InputStream
 import io.legado.app.utils.GSON
 import io.legado.app.utils.fromJsonArray
 import io.legado.app.utils.fromJsonObject
@@ -54,6 +56,7 @@ class ReaderServerApi(
         private const val API_SAVE_RSS_SOURCES = "$API_PREFIX/saveRssSources"
         private const val API_DELETE_RSS_SOURCES = "$API_PREFIX/deleteRssSources"
         private const val API_SEARCH_BOOK = "$API_PREFIX/searchBook"
+        private const val API_GET_LOCAL_STORE_FILE = "$API_PREFIX/getLocalStoreFile"
     }
 
     // 缓存的 accessToken（格式：username:token）
@@ -393,6 +396,23 @@ class ReaderServerApi(
         }
         
         return result.data ?: emptyList()
+    }
+
+    /**
+     * 下载本地存储的书籍文件
+     * @param path 文件路径，如 "storage/localStore/xxx.epub"
+     * @return 文件的 InputStream
+     */
+    suspend fun downloadLocalStoreFile(path: String): InputStream {
+        val url = buildAuthUrl(API_GET_LOCAL_STORE_FILE, mapOf("path" to path))
+        
+        AppLog.put("ReaderServerApi: 下载文件 $path")
+        
+        val responseBody = okHttpClient.newCallResponseBody {
+            url(url)
+        }
+        
+        return responseBody.byteStream()
     }
 
     /**

@@ -3,13 +3,17 @@ package io.legado.app.help
 import io.legado.app.constant.AppLog
 import io.legado.app.constant.PreferKey
 import io.legado.app.data.appDb
+import android.net.Uri
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookProgress
 import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.RssSource
 import io.legado.app.data.entities.Server
+import io.legado.app.exception.NoBooksDirException
 import io.legado.app.exception.NoStackTraceException
+import io.legado.app.model.localBook.LocalBook
 import io.legado.app.model.remote.ReaderServerApi
+import io.legado.app.utils.FileDoc
 import io.legado.app.utils.GSON
 import io.legado.app.utils.NetworkUtils
 import io.legado.app.utils.getPrefBoolean
@@ -497,6 +501,60 @@ object ReaderServerSync {
                 }
                 
                 results
+            }
+        }
+    }
+    
+    /**
+     * 判断书籍是否为服务器上的本地存储书籍
+     */
+    fun isServerLocalBook(book: Book): Boolean {
+        return book.bookUrl.startsWith("storage/localStore/")
+    }
+    
+    /**
+     * 从服务器下载本地存储的书籍文件
+     * @param book 书籍对象，bookUrl 应该是 "storage/localStore/xxx.epub" 格式
+     * @return 下载成功后的本地 Uri
+     */
+    suspend fun downloadBookFile(book: Book): Result<Uri> {
+        return withContext(Dispatchers.IO) {
+            kotlin.runCatching {
+                if (!NetworkUtils.isAvailable()) {
+                    throw NoStackTraceException("网络不可用")
+                }
+                val serverApi = api ?: throw NoStackTraceException("服务器未配置")
+                
+                if (!isServerLocalBook(book)) {
+                    throw NoStackTraceException("书籍不是服务器本地存储的书籍")
+                }
+                
+                // 从 bookUrl 中提取文件名
+                val fileName = book.bookUrl.substringAfterLast("/")
+                if (fileName.isBlank()) {
+                    throw NoStackTraceException("无法获取书籍文件名")
+                }
+                
+                AppLog.put("开始从服务器下载书籍文件: ${book.name} ($fileName)")
+                
+                // 从服务器下载文件
+                val inputStream = serverApi.downloadLocalStoreFile(book.bookUrl)
+                
+                // 保存到本地
+                val localUri = LocalBook.saveBookFile(inputStream, fileName)
+                
+                // 更新书籍的 bookUrl 为本地路径
+                val newBookUrl = FileDoc.fromUri(localUri, false).toString()
+                book.bookUrl = newBookUrl
+                book.save()
+                
+                AppLog.put("书籍文件下载完成: ${book.name}, 保存到: $newBookUrl")
+                
+                // 保存 token
+                val (token, expireTime) = serverApi.getTokenInfo()
+                saveTokenInfo(token, expireTime)
+                
+                localUri
             }
         }
     }

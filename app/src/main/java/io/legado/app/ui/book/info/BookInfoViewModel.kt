@@ -17,7 +17,9 @@ import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.BookSource
 import io.legado.app.exception.NoBooksDirException
 import io.legado.app.exception.NoStackTraceException
+import io.legado.app.help.config.AppConfig
 import io.legado.app.help.AppWebDav
+import io.legado.app.help.ReaderServerSync
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.getExportFileName
 import io.legado.app.help.book.getRemoteUrl
@@ -95,11 +97,25 @@ class BookInfoViewModel(application: Application) : BaseViewModel(application) {
             }
         }
     }
+    
+    /**
+     * 重新加载书籍（用于选择文件夹后重新触发下载）
+     */
+    fun reloadBook(book: Book) {
+        upBook(book)
+    }
 
     private fun upBook(book: Book) {
         execute {
             bookData.postValue(book)
             upCoverByRule(book)
+            
+            // 检查是否是服务器同步的本地书籍，如果是则需要先下载文件
+            if (ReaderServerSync.isServerLocalBook(book)) {
+                downloadServerBookFile(book)
+                return@execute
+            }
+            
             bookSource = if (book.isLocal) null else
                 appDb.bookSourceDao.getBookSource(book.origin)
             if (book.tocUrl.isEmpty() && !book.isLocal) {
@@ -112,6 +128,42 @@ class BookInfoViewModel(application: Application) : BaseViewModel(application) {
                     loadChapter(book)
                 }
             }
+        }
+    }
+    
+    /**
+     * 下载服务器上的本地书籍文件
+     */
+    private fun downloadServerBookFile(book: Book) {
+        execute {
+            // 检查是否设置了书籍保存目录
+            if (AppConfig.defaultBookTreeUri.isNullOrBlank()) {
+                actionLive.postValue("selectBooksDir")
+                return@execute
+            }
+            
+            waitDialogData.postValue(true)
+            
+            // 确保服务器同步已初始化
+            ReaderServerSync.initConfig()
+            
+            // 下载书籍文件
+            ReaderServerSync.downloadBookFile(book).onSuccess { uri ->
+                // 下载成功，重新加载书籍信息
+                bookData.postValue(book)
+                bookSource = null  // 本地书籍没有书源
+                loadChapter(book)
+            }.onFailure { e ->
+                when (e) {
+                    is NoBooksDirException -> actionLive.postValue("selectBooksDir")
+                    else -> {
+                        AppLog.put("下载服务器书籍文件失败: ${e.localizedMessage}", e)
+                        context.toastOnUi("下载书籍失败: ${e.localizedMessage}")
+                    }
+                }
+            }
+        }.onFinally {
+            waitDialogData.postValue(false)
         }
     }
 

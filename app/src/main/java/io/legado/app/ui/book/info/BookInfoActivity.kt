@@ -109,9 +109,9 @@ class BookInfoActivity :
     private val localBookTreeSelect = registerForActivityResult(HandleFileContract()) {
         it.uri?.let { treeUri ->
             AppConfig.defaultBookTreeUri = treeUri.toString()
-            // 重新加载书籍信息，触发下载流程
+            // 重新触发书籍加载，此时 defaultBookTreeUri 已设置，会自动下载服务器书籍
             viewModel.getBook()?.let { book ->
-                viewModel.loadBookInfo(book, canReName = false)
+                viewModel.reloadBook(book)
             }
         }
     }
