@@ -8,9 +8,7 @@
 <div align="center">
 <img width="125" height="125" src="https://github.com/gedoor/legado/raw/master/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" alt="legado"/>  
   
-Legado / 开源阅读
-<br>
-兼容 <a href="https://github.com/hectorqin/reader/" target="_blank">hectorqin_reader</a> 服务器
+Legado / 开源阅读 - 兼容 <a href="https://github.com/hectorqin/reader/" target="_blank">hectorqin_reader</a> 服务器
 <br>
 <a href="https://gedoor.github.io" target="_blank">gedoor.github.io</a> / <a href="https://www.legado.top/" target="_blank">legado.top</a>
 <br>
