@@ -16,3 +16,5 @@ package-lock.json
 .idea/
 # Kotlin 2.0
 .kotlin/
+# realse key
+my-release-key.jks
