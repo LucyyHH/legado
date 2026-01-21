@@ -1,6 +1,7 @@
 package io.legado.app.help
 
 import io.legado.app.constant.AppLog
+import io.legado.app.constant.BookType
 import io.legado.app.constant.PreferKey
 import io.legado.app.data.appDb
 import android.net.Uri
@@ -533,6 +534,9 @@ object ReaderServerSync {
                     throw NoStackTraceException("书籍不是服务器本地存储的书籍")
                 }
                 
+                // 保存旧的 bookUrl，因为 bookUrl 是主键，更新时需要先删除旧记录
+                val oldBookUrl = book.bookUrl
+                
                 // 从 bookUrl 中提取文件名
                 val fileName = book.bookUrl.substringAfterLast("/")
                 if (fileName.isBlank()) {
@@ -559,7 +563,7 @@ object ReaderServerSync {
                 
                 // 从服务器下载文件
                 val inputStream = if (book.bookUrl.startsWith("storage/data/")) {
-                    // 直接通过静态路由下载
+                    // 直接通过静态路由下载（带认证）
                     serverApi.downloadFile(downloadPath)
                 } else {
                     // 通过 getLocalStoreFile API 下载
@@ -571,8 +575,27 @@ object ReaderServerSync {
                 
                 // 更新书籍的 bookUrl 为本地路径
                 val newBookUrl = FileDoc.fromUri(localUri, false).toString()
-                book.bookUrl = newBookUrl
-                book.save()
+                
+                // 由于 bookUrl 是主键，直接修改会导致 save() 插入新记录而不是更新
+                // 需要先删除旧记录，再插入新记录
+                if (oldBookUrl != newBookUrl) {
+                    // 创建旧书籍对象用于删除（只需要 bookUrl 作为主键）
+                    val oldBook = book.copy()
+                    oldBook.bookUrl = oldBookUrl
+                    
+                    // 更新当前书籍的属性，使其成为本地书籍
+                    book.bookUrl = newBookUrl
+                    book.origin = BookType.localTag  // 标记为本地书籍
+                    book.originName = fileName  // 设置原始文件名
+                    book.type = book.type or BookType.local  // 添加本地书籍类型标志
+                    
+                    // 使用 replace 方法：先删除旧记录，再插入新记录
+                    appDb.bookDao.replace(oldBook, book)
+                    
+                    AppLog.put("数据库更新完成: 旧路径=$oldBookUrl, 新路径=$newBookUrl, origin=${book.origin}, originName=${book.originName}")
+                } else {
+                    book.save()
+                }
                 
                 AppLog.put("书籍文件下载完成: ${book.name}, 保存到: $newBookUrl")
                 

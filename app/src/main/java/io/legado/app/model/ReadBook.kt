@@ -591,11 +591,27 @@ object ReadBook : CoroutineScope by MainScope() {
                         resetPageOffset,
                         success = success
                     )
-                } ?: download(
-                    downloadScope,
-                    chapter,
-                    resetPageOffset
-                )
+                } ?: run {
+                    // 尝试从 Reader 服务器获取章节内容
+                    val serverContent = tryGetContentFromServer(book, chapter)
+                    if (serverContent != null) {
+                        contentLoadFinish(
+                            book,
+                            chapter,
+                            serverContent,
+                            upContent,
+                            resetPageOffset,
+                            success = success
+                        )
+                    } else {
+                        // 服务器没有缓存，从书源下载
+                        download(
+                            downloadScope,
+                            chapter,
+                            resetPageOffset
+                        )
+                    }
+                }
             }
         }.onError {
             AppLog.put("加载正文出错\n${it.localizedMessage}")
@@ -612,7 +628,10 @@ object ReadBook : CoroutineScope by MainScope() {
             try {
                 val book = book!!
                 val chapter = appDb.bookChapterDao.getChapter(book.bookUrl, index)!!
-                val content = BookHelp.getContent(book, chapter) ?: downloadAwait(chapter)
+                // 先从本地缓存获取，然后尝试从服务器获取，最后从书源下载
+                val content = BookHelp.getContent(book, chapter)
+                    ?: tryGetContentFromServer(book, chapter)
+                    ?: downloadAwait(chapter)
                 contentLoadFinishAwait(book, chapter, content, upContent, resetPageOffset)
                 success?.invoke()
             } catch (e: Exception) {
@@ -678,6 +697,29 @@ object ReadBook : CoroutineScope by MainScope() {
         } else {
             val msg = if (book.isLocal) "无内容" else "没有书源"
             return "加载正文失败\n$msg"
+        }
+    }
+    
+    /**
+     * 尝试从 Reader 服务器获取章节内容
+     * 如果服务器配置了且有缓存，返回内容并保存到本地；否则返回 null
+     */
+    private suspend fun tryGetContentFromServer(book: Book, chapter: BookChapter): String? {
+        if (!ReaderServerSync.isOk) return null
+        return try {
+            ReaderServerSync.getBookContent(book.bookUrl, chapter.index).getOrNull()?.let { content ->
+                if (content.isNotBlank()) {
+                    // 保存到本地缓存
+                    BookHelp.saveText(book, chapter, content)
+                    AppLog.put("从服务器获取章节内容成功: ${book.name} - ${chapter.title}")
+                    content
+                } else {
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            AppLog.put("从服务器获取章节内容失败: ${e.localizedMessage}")
+            null
         }
     }
 

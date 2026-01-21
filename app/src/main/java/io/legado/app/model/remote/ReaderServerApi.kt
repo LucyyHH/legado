@@ -416,12 +416,15 @@ class ReaderServerApi(
     }
     
     /**
-     * 直接下载文件（通过静态路由）
+     * 直接下载文件（通过静态路由，带认证）
      * @param path 文件路径，如 "/epub/xxx/book.epub"
      * @return 文件的 InputStream
      */
     suspend fun downloadFile(path: String): InputStream {
-        val url = "$baseUrl$path"
+        // 静态路由也需要带上 accessToken 认证参数
+        val accessToken = getValidAccessToken()
+        val encodedToken = java.net.URLEncoder.encode(accessToken, "UTF-8")
+        val url = "$baseUrl$path?accessToken=$encodedToken"
         
         AppLog.put("ReaderServerApi: 直接下载文件 $url")
         

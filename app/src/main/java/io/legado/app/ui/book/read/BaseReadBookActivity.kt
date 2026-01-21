@@ -69,6 +69,8 @@ abstract class BaseReadBookActivity :
         }
     private val selectBookFolderResult = registerForActivityResult(HandleFileContract()) {
         it.uri?.let { uri ->
+            // 保存选择的书籍目录，这样权限才会被持久化
+            AppConfig.defaultBookTreeUri = uri.toString()
             ReadBook.book?.let { book ->
                 FileDoc.fromUri(uri, true).find(book.originName)?.let { doc ->
                     book.bookUrl = doc.uri.toString()
@@ -76,6 +78,19 @@ abstract class BaseReadBookActivity :
                     viewModel.loadChapterList(book)
                 } ?: ReadBook.upMsg("找不到文件")
             }
+        } ?: ReadBook.upMsg("没有权限访问")
+    }
+    
+    // 服务器书籍下载专用的文件夹选择器
+    private var pendingDownloadBook: io.legado.app.data.entities.Book? = null
+    private val selectBooksDirForDownload = registerForActivityResult(HandleFileContract()) {
+        it.uri?.let { uri ->
+            AppConfig.defaultBookTreeUri = uri.toString()
+            // 选择目录后，重新触发下载
+            pendingDownloadBook?.let { book ->
+                viewModel.retryDownloadServerBook(book)
+            }
+            pendingDownloadBook = null
         } ?: ReadBook.upMsg("没有权限访问")
     }
 
@@ -99,6 +114,14 @@ abstract class BaseReadBookActivity :
             selectBookFolderResult.launch {
                 mode = HandleFileContract.DIR_SYS
                 title = "选择书籍所在文件夹"
+            }
+        }
+        // 服务器书籍需要选择保存目录后再下载
+        viewModel.selectBooksDirLiveData.observe(this) { book ->
+            pendingDownloadBook = book
+            selectBooksDirForDownload.launch {
+                mode = HandleFileContract.DIR_SYS
+                title = getString(R.string.select_book_folder)
             }
         }
         if (!LocalConfig.readHelpVersionIsLast) {
