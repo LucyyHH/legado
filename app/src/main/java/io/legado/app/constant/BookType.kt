@@ -70,4 +70,10 @@ object BookType {
      */
     const val webDavTag = "webDav::"
 
+    /**
+     * Reader Server 服务器本地书籍标记
+     * 用于标识从 Reader Server 同步的本地书籍（TXT、EPUB、PDF、CBZ 等）
+     */
+    const val readerServerLocalTag = "reader_server_local"
+
 }

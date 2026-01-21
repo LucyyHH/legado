@@ -60,7 +60,6 @@ import kotlin.coroutines.coroutineContext
  */
 class ReadBookViewModel(application: Application) : BaseViewModel(application) {
     val permissionDenialLiveData = MutableLiveData<Int>()
-    val selectBooksDirLiveData = MutableLiveData<Book>()  // 服务器书籍需要选择保存目录
     var isInitFinish = false
     var searchContentQuery = ""
     var searchResultList: List<SearchResult>? = null
@@ -119,17 +118,13 @@ class ReadBookViewModel(application: Application) : BaseViewModel(application) {
         }
         isInitFinish = true
         
-        // 检测是否是服务器同步的本地书籍，需要先下载
-        if (ReaderServerSync.isServerLocalBook(book)) {
-            if (!downloadServerBookFile(book)) {
-                return
-            }
-        }
+        // 服务器本地书籍统一通过 API 获取章节，跳过本地文件检查
+        val isServerLocalBook = ReaderServerSync.isServerLocalBook(book)
         
-        if (!book.isLocal && book.tocUrl.isEmpty() && !loadBookInfo(book)) {
+        if (!isServerLocalBook && !book.isLocal && book.tocUrl.isEmpty() && !loadBookInfo(book)) {
             return
         }
-        if (book.isLocal && !checkLocalBookFileExist(book)) {
+        if (!isServerLocalBook && book.isLocal && !checkLocalBookFileExist(book)) {
             return
         }
         if ((ReadBook.chapterSize == 0 || book.isLocalModified()) && !loadChapterListAwait(book)) {
@@ -151,7 +146,7 @@ class ReadBookViewModel(application: Application) : BaseViewModel(application) {
                 syncBookProgress(book)
             }
         }
-        if (!book.isLocal && ReadBook.bookSource == null) {
+        if (!isServerLocalBook && !book.isLocal && ReadBook.bookSource == null) {
             autoChangeSource(book.name, book.author)
             return
         }
@@ -167,56 +162,6 @@ class ReadBookViewModel(application: Application) : BaseViewModel(application) {
                 permissionDenialLiveData.postValue(0)
             }
             return false
-        }
-    }
-    
-    /**
-     * 下载服务器上的本地书籍文件
-     * @return true 下载成功或无需下载，false 需要等待用户选择文件夹
-     */
-    private suspend fun downloadServerBookFile(book: Book): Boolean {
-        // 检查是否设置了书籍保存目录
-        if (AppConfig.defaultBookTreeUri.isNullOrBlank()) {
-            ReadBook.upMsg("请选择书籍保存目录")
-            selectBooksDirLiveData.postValue(book)
-            return false
-        }
-        
-        ReadBook.upMsg("正在从服务器下载书籍...")
-        
-        // 确保服务器同步已初始化
-        ReaderServerSync.initConfig()
-        
-        // 下载书籍文件
-        val result = ReaderServerSync.downloadBookFile(book)
-        return result.fold(
-            onSuccess = { uri ->
-                AppLog.put("服务器书籍下载成功: ${book.name}, 路径: $uri")
-                ReadBook.upMsg(null)
-                // 下载成功后，book 的属性已经被更新，重新设置 ReadBook
-                ReadBook.resetData(book)
-                true
-            },
-            onFailure = { e ->
-                AppLog.put("服务器书籍下载失败: ${e.localizedMessage}", e)
-                ReadBook.upMsg("下载书籍失败: ${e.localizedMessage}")
-                false
-            }
-        )
-    }
-    
-    /**
-     * 用户选择文件夹后，重新触发服务器书籍下载
-     */
-    fun retryDownloadServerBook(book: Book) {
-        execute {
-            if (downloadServerBookFile(book)) {
-                // 下载成功，继续初始化
-                initBook(book)
-            }
-        }.onError {
-            AppLog.put("重试下载服务器书籍失败: ${it.localizedMessage}", it)
-            ReadBook.upMsg("下载失败: ${it.localizedMessage}")
         }
     }
 
@@ -247,6 +192,30 @@ class ReadBookViewModel(application: Application) : BaseViewModel(application) {
     }
 
     private suspend fun loadChapterListAwait(book: Book): Boolean {
+        // 服务器本地书籍通过 API 获取章节列表
+        if (ReaderServerSync.isServerLocalBook(book)) {
+            kotlin.runCatching {
+                ReaderServerSync.initConfig()
+                ReaderServerSync.getChapterList(book.bookUrl).onSuccess { chapters ->
+                    if (chapters.isNotEmpty()) {
+                        appDb.bookChapterDao.delByBook(book.bookUrl)
+                        appDb.bookChapterDao.insert(*chapters.toTypedArray())
+                        book.totalChapterNum = chapters.size
+                        appDb.bookDao.update(book)
+                        ReadBook.onChapterListUpdated(book)
+                        AppLog.put("服务器书籍章节加载成功: ${book.name}, 共 ${chapters.size} 章")
+                    }
+                }.onFailure {
+                    throw it
+                }
+                return true
+            }.onFailure {
+                AppLog.put("服务器书籍章节加载失败: ${it.localizedMessage}", it)
+                ReadBook.upMsg("加载章节失败: ${it.localizedMessage}")
+                return false
+            }
+        }
+        
         if (book.isLocal) {
             kotlin.runCatching {
                 LocalBook.getChapterList(book).let {

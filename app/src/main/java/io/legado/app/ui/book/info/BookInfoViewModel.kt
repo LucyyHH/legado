@@ -110,9 +110,9 @@ class BookInfoViewModel(application: Application) : BaseViewModel(application) {
             bookData.postValue(book)
             upCoverByRule(book)
             
-            // 检查是否是服务器同步的本地书籍，如果是则需要先下载文件
+            // 服务器本地书籍统一通过 API 获取章节
             if (ReaderServerSync.isServerLocalBook(book)) {
-                downloadServerBookFile(book)
+                loadServerChapter(book)
                 return@execute
             }
             
@@ -132,35 +132,26 @@ class BookInfoViewModel(application: Application) : BaseViewModel(application) {
     }
     
     /**
-     * 下载服务器上的本地书籍文件
+     * 加载服务器本地书籍的章节列表（通过 API）
      */
-    private fun downloadServerBookFile(book: Book) {
+    private fun loadServerChapter(book: Book) {
         execute {
-            // 检查是否设置了书籍保存目录
-            if (AppConfig.defaultBookTreeUri.isNullOrBlank()) {
-                actionLive.postValue("selectBooksDir")
-                return@execute
-            }
-            
             waitDialogData.postValue(true)
-            
-            // 确保服务器同步已初始化
             ReaderServerSync.initConfig()
-            
-            // 下载书籍文件
-            ReaderServerSync.downloadBookFile(book).onSuccess { uri ->
-                // 下载成功，重新加载书籍信息
-                bookData.postValue(book)
-                bookSource = null  // 本地书籍没有书源
-                loadChapter(book)
-            }.onFailure { e ->
-                when (e) {
-                    is NoBooksDirException -> actionLive.postValue("selectBooksDir")
-                    else -> {
-                        AppLog.put("下载服务器书籍文件失败: ${e.localizedMessage}", e)
-                        context.toastOnUi("下载书籍失败: ${e.localizedMessage}")
-                    }
+            ReaderServerSync.getChapterList(book.bookUrl).onSuccess { chapters ->
+                if (chapters.isNotEmpty()) {
+                    appDb.bookChapterDao.delByBook(book.bookUrl)
+                    appDb.bookChapterDao.insert(*chapters.toTypedArray())
+                    book.totalChapterNum = chapters.size
+                    appDb.bookDao.update(book)
+                    chapterListData.postValue(chapters)
+                    AppLog.put("服务器书籍章节加载成功: ${book.name}, 共 ${chapters.size} 章")
+                } else {
+                    context.toastOnUi("章节列表为空")
                 }
+            }.onFailure { e ->
+                AppLog.put("加载服务器书籍章节失败: ${e.localizedMessage}", e)
+                context.toastOnUi("加载章节失败: ${e.localizedMessage}")
             }
         }.onFinally {
             waitDialogData.postValue(false)
@@ -226,6 +217,13 @@ class BookInfoViewModel(application: Application) : BaseViewModel(application) {
         runPreUpdateJs: Boolean = true,
         scope: CoroutineScope = viewModelScope
     ) {
+        // 服务器本地书籍通过 API 加载章节
+        if (ReaderServerSync.isServerLocalBook(book)) {
+            bookData.postValue(book)
+            loadServerChapter(book)
+            return
+        }
+        // 本地书籍更新书籍信息并加载章节
         if (book.isLocal) {
             LocalBook.upBookInfo(book)
             bookData.postValue(book)
@@ -269,6 +267,11 @@ class BookInfoViewModel(application: Application) : BaseViewModel(application) {
         runPreUpdateJs: Boolean = true,
         scope: CoroutineScope = viewModelScope
     ) {
+        // 服务器本地书籍优先通过 API 获取章节（防止被误判为本地书籍）
+        if (ReaderServerSync.isServerLocalBook(book)) {
+            loadServerChapter(book)
+            return
+        }
         if (book.isLocal) {
             execute(scope) {
                 LocalBook.getChapterList(book).let {

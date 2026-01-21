@@ -44,6 +44,15 @@ val Book.isImage: Boolean
 
 val Book.isLocal: Boolean
     get() {
+        // 服务器本地书籍不应被视为本地书籍，通过 API 获取内容
+        if (origin == BookType.readerServerLocalTag) {
+            return false
+        }
+        // 兼容旧版服务器书籍：origin 是 loc_book 但 bookUrl 是服务器格式
+        // 这种书籍是从服务器同步的，不应被视为本地书籍
+        if (bookUrl.startsWith("storage/")) {
+            return false
+        }
         if (type == 0) {
             return origin == BookType.localTag || origin.startsWith(BookType.webDavTag)
         }
@@ -107,6 +116,10 @@ private val localUriCache by lazy {
 }
 
 fun Book.getLocalUri(): Uri {
+    // 服务器本地书籍保护：这类书籍应该通过 API 获取内容，不应调用此方法
+    if (origin == BookType.readerServerLocalTag || bookUrl.startsWith("storage/")) {
+        throw NoStackTraceException("服务器书籍不应调用 getLocalUri，应通过 API 获取内容 (origin=$origin, bookUrl=$bookUrl)")
+    }
     if (!isLocal) {
         throw NoStackTraceException("不是本地书籍")
     }
@@ -294,6 +307,7 @@ fun Book.getBookSource(): BookSource? {
 }
 
 fun Book.isLocalModified(): Boolean {
+    // 注意：服务器本地书籍的 isLocal 会返回 false，所以自动跳过本地文件修改检查
     return isLocal && LocalBook.getLastModified(this).getOrDefault(0L) > latestChapterTime
 }
 

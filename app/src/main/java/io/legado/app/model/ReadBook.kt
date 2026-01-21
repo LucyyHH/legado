@@ -603,8 +603,12 @@ object ReadBook : CoroutineScope by MainScope() {
                             resetPageOffset,
                             success = success
                         )
+                    } else if (ReaderServerSync.isServerLocalBook(book)) {
+                        // 服务器本地书籍只能从服务器获取内容
+                        removeLoading(index)
+                        upMsg("获取章节内容失败")
                     } else {
-                        // 服务器没有缓存，从书源下载
+                        // 从书源下载
                         download(
                             downloadScope,
                             chapter,
@@ -628,10 +632,17 @@ object ReadBook : CoroutineScope by MainScope() {
             try {
                 val book = book!!
                 val chapter = appDb.bookChapterDao.getChapter(book.bookUrl, index)!!
-                // 先从本地缓存获取，然后尝试从服务器获取，最后从书源下载
-                val content = BookHelp.getContent(book, chapter)
+                // 先从本地缓存获取，然后尝试从服务器获取
+                var content = BookHelp.getContent(book, chapter)
                     ?: tryGetContentFromServer(book, chapter)
-                    ?: downloadAwait(chapter)
+                // 服务器本地书籍只能从服务器获取内容
+                if (content == null) {
+                    content = if (ReaderServerSync.isServerLocalBook(book)) {
+                        "获取章节内容失败"
+                    } else {
+                        downloadAwait(chapter)
+                    }
+                }
                 contentLoadFinishAwait(book, chapter, content, upContent, resetPageOffset)
                 success?.invoke()
             } catch (e: Exception) {

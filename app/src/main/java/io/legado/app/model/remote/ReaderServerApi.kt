@@ -15,10 +15,8 @@ import io.legado.app.help.http.okHttpClient
 import io.legado.app.help.http.postJson
 import java.io.InputStream
 import io.legado.app.utils.GSON
-import io.legado.app.utils.fromJsonArray
 import io.legado.app.utils.fromJsonObject
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
+import org.jsoup.Jsoup
 
 /**
  * Reader Server API 客户端
@@ -306,6 +304,8 @@ class ReaderServerApi(
 
     /**
      * 获取章节内容
+     * 注意：对于 EPUB 等格式，服务器可能返回章节内容的 URL 而非实际内容
+     * 此方法会自动检测并再次请求获取实际内容
      */
     suspend fun getBookContent(bookUrl: String, chapterIndex: Int): String {
         val url = buildAuthUrl(API_GET_BOOK_CONTENT, mapOf("url" to bookUrl, "index" to chapterIndex.toString()))
@@ -318,7 +318,45 @@ class ReaderServerApi(
             throw NoStackTraceException(result.errorMsg ?: "获取章节内容失败")
         }
         
-        return result.data ?: ""
+        var content = result.data ?: ""
+        
+        // 检查返回值是否为 URL 或相对路径（服务器对 EPUB 等格式可能返回章节内容链接）
+        // 支持完整 URL (http://, https://) 和相对路径 (/book-assets/)
+        if (content.startsWith("http://") || content.startsWith("https://") || content.startsWith("/book-assets/")) {
+            // 构建完整 URL
+            val contentUrl = if (content.startsWith("/")) {
+                // 相对路径，需要拼接服务器地址
+                "$baseUrl$content"
+            } else {
+                content
+            }
+            // 再次请求获取实际内容（带认证）
+            val accessToken = getValidAccessToken()
+            val encodedToken = java.net.URLEncoder.encode(accessToken, "UTF-8").replace("+", "%20")
+            val finalUrl = if (contentUrl.contains("?")) {
+                "$contentUrl&accessToken=$encodedToken"
+            } else {
+                "$contentUrl?accessToken=$encodedToken"
+            }
+            content = requestGet(finalUrl)
+            
+            // 如果是 XHTML/HTML 内容，使用 Jsoup 解析提取纯文本
+            if (content.contains("<html") || content.contains("<body") || content.contains("<?xml")) {
+                try {
+                    // 使用 Jsoup 解析 HTML，提取 body 内容
+                    val doc = Jsoup.parse(content)
+                    val body = doc.body()
+                    // 获取纯文本，保留换行
+                    content = body.wholeText()
+                        .replace(Regex("\\n{3,}"), "\n\n") // 压缩多个空行
+                        .trim()
+                } catch (e: Exception) {
+                    content = io.legado.app.utils.HtmlFormatter.format(content)
+                }
+            }
+        }
+        
+        return content
     }
 
     /**
@@ -423,8 +461,17 @@ class ReaderServerApi(
     suspend fun downloadFile(path: String): InputStream {
         // 静态路由也需要带上 accessToken 认证参数
         val accessToken = getValidAccessToken()
-        val encodedToken = java.net.URLEncoder.encode(accessToken, "UTF-8")
-        val url = "$baseUrl$path?accessToken=$encodedToken"
+        val encodedToken = java.net.URLEncoder.encode(accessToken, "UTF-8").replace("+", "%20")
+        // 对路径进行 URL 编码，但保留 / 字符
+        // 注意：URLEncoder 会把空格编码为 +，但 URL 路径中应该使用 %20
+        val encodedPath = path.split("/").joinToString("/") { segment ->
+            if (segment.isNotEmpty()) {
+                java.net.URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
+            } else {
+                segment
+            }
+        }
+        val url = "$baseUrl$encodedPath?accessToken=$encodedToken"
         
         AppLog.put("ReaderServerApi: 直接下载文件 $url")
         
@@ -433,6 +480,55 @@ class ReaderServerApi(
         }
         
         return responseBody.byteStream()
+    }
+
+    /**
+     * 下载服务器本地书籍的图片
+     * @param bookUrl 书籍的 bookUrl（如 storage/data/xxx/book.cbz）
+     * @param imageSrc 图片源路径（如 index/006.jpg 或 /book-assets/.../index/006.jpg 或 __API_ROOT__/book-assets/...）
+     * @return 图片的字节数据
+     */
+    suspend fun getBookImage(bookUrl: String, imageSrc: String): ByteArray {
+        // 处理服务器返回的图片路径格式
+        // 可能的格式：
+        // 1. __API_ROOT__/book-assets/xxx/index/0002.jpg （服务器占位符格式）
+        // 2. /book-assets/xxx/index/0002.jpg （绝对路径）
+        // 3. index/0002.jpg （相对路径）
+        var src = imageSrc
+        
+        // 去掉 __API_ROOT__ 占位符
+        if (src.startsWith("__API_ROOT__")) {
+            src = src.removePrefix("__API_ROOT__")
+        }
+        
+        // 构建图片路径
+        val imagePath = if (src.startsWith("/book-assets/")) {
+            src
+        } else if (src.startsWith("/")) {
+            src
+        } else {
+            // 相对路径，需要拼接 bookUrl
+            "/book-assets/$bookUrl/$src"
+        }
+        
+        val accessToken = getValidAccessToken()
+        val encodedToken = java.net.URLEncoder.encode(accessToken, "UTF-8").replace("+", "%20")
+        // 对路径进行 URL 编码，但保留 / 字符
+        val encodedPath = imagePath.split("/").joinToString("/") { segment ->
+            if (segment.isNotEmpty()) {
+                java.net.URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
+            } else {
+                segment
+            }
+        }
+        
+        val url = "$baseUrl$encodedPath?accessToken=$encodedToken"
+        
+        val responseBody = okHttpClient.newCallResponseBody {
+            url(url)
+        }
+        
+        return responseBody.bytes()
     }
 
     /**

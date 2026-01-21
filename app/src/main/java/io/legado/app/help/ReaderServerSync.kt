@@ -4,18 +4,13 @@ import io.legado.app.constant.AppLog
 import io.legado.app.constant.BookType
 import io.legado.app.constant.PreferKey
 import io.legado.app.data.appDb
-import android.net.Uri
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookProgress
 import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.RssSource
 import io.legado.app.data.entities.Server
-import io.legado.app.exception.NoBooksDirException
 import io.legado.app.exception.NoStackTraceException
-import io.legado.app.model.localBook.LocalBook
 import io.legado.app.model.remote.ReaderServerApi
-import io.legado.app.utils.FileDoc
-import io.legado.app.utils.GSON
 import io.legado.app.utils.NetworkUtils
 import io.legado.app.utils.getPrefBoolean
 import io.legado.app.utils.getPrefString
@@ -274,7 +269,22 @@ object ReaderServerSync {
                             uploaded++
                         }
                     } else {
-                        // 都有，比较进度
+                        // 都有，先检查是否需要修复服务器本地书籍的 origin 和 bookUrl
+                        var needUpdate = false
+                        if (serverBook.bookUrl.startsWith("storage/")) {
+                            // 服务器本地书籍，确保 origin 和 bookUrl 正确
+                            if (localBook.origin != BookType.readerServerLocalTag) {
+                                localBook.origin = BookType.readerServerLocalTag
+                                needUpdate = true
+                            }
+                            // 如果 bookUrl 被修改过（不是 storage/ 开头），恢复为服务器的 bookUrl
+                            if (!localBook.bookUrl.startsWith("storage/")) {
+                                localBook.bookUrl = serverBook.bookUrl
+                                needUpdate = true
+                            }
+                        }
+                        
+                        // 比较进度
                         if (shouldUpdateProgress(localBook, serverBook)) {
                             // 服务器进度更新，更新本地
                             localBook.durChapterIndex = serverBook.durChapterIndex
@@ -289,6 +299,11 @@ object ReaderServerSync {
                             if (serverApi.saveBook(localBook)) {
                                 uploaded++
                             }
+                        } else if (needUpdate) {
+                            // origin 或 bookUrl 被修复，需要更新数据库
+                            localBook.syncTime = System.currentTimeMillis()
+                            appDb.bookDao.update(localBook)
+                            updated++
                         }
                     }
                 }
@@ -300,6 +315,10 @@ object ReaderServerSync {
                     if (!localBookMap.containsKey(key)) {
                         // 本地没有，添加到本地
                         serverBook.syncTime = System.currentTimeMillis()
+                        // 标记服务器本地书籍，使用专门的 origin 标记
+                        if (serverBook.bookUrl.startsWith("storage/")) {
+                            serverBook.origin = BookType.readerServerLocalTag
+                        }
                         appDb.bookDao.insert(serverBook)
                         downloaded++
                     }
@@ -508,104 +527,19 @@ object ReaderServerSync {
     
     /**
      * 判断书籍是否为服务器上的本地存储书籍
-     * 服务器本地书籍的 bookUrl 格式：
-     * - storage/data/{namespace}/{bookname}_{author}/{filename} （同步后的格式）
-     * - storage/localStore/{filename} （本地书仓格式）
+     * 服务器本地书籍的识别方式：
+     * - 优先检查 origin 是否为 BookType.readerServerLocalTag（新方式，不受 bookUrl 修改影响）
+     * - 兼容检查 bookUrl 是否以 storage/ 开头（旧方式，兼容已同步但 origin 未更新的书籍）
+     * 
+     * 所有服务器本地书籍（TXT、EPUB、PDF、CBZ 等）统一通过 API 获取章节
      */
     fun isServerLocalBook(book: Book): Boolean {
-        return book.bookUrl.startsWith("storage/")
-    }
-    
-    /**
-     * 从服务器下载本地存储的书籍文件
-     * @param book 书籍对象
-     * @return 下载成功后的本地 Uri
-     */
-    suspend fun downloadBookFile(book: Book): Result<Uri> {
-        return withContext(Dispatchers.IO) {
-            kotlin.runCatching {
-                if (!NetworkUtils.isAvailable()) {
-                    throw NoStackTraceException("网络不可用")
-                }
-                val serverApi = api ?: throw NoStackTraceException("服务器未配置")
-                val serverConfig = config ?: throw NoStackTraceException("服务器未配置")
-                
-                if (!isServerLocalBook(book)) {
-                    throw NoStackTraceException("书籍不是服务器本地存储的书籍")
-                }
-                
-                // 保存旧的 bookUrl，因为 bookUrl 是主键，更新时需要先删除旧记录
-                val oldBookUrl = book.bookUrl
-                
-                // 从 bookUrl 中提取文件名
-                val fileName = book.bookUrl.substringAfterLast("/")
-                if (fileName.isBlank()) {
-                    throw NoStackTraceException("无法获取书籍文件名")
-                }
-                
-                AppLog.put("开始从服务器下载书籍文件: ${book.name} ($fileName)")
-                AppLog.put("书籍 bookUrl: ${book.bookUrl}")
-                
-                // 根据 bookUrl 格式确定下载路径
-                val downloadPath = when {
-                    book.bookUrl.startsWith("storage/data/") -> {
-                        // storage/data/ 目录的文件通过 /epub/ 路由访问
-                        "/epub/" + book.bookUrl.removePrefix("storage/data/")
-                    }
-                    book.bookUrl.startsWith("storage/localStore/") -> {
-                        // storage/localStore/ 目录的文件通过 getLocalStoreFile API 访问
-                        "/" + book.bookUrl.removePrefix("storage/localStore/")
-                    }
-                    else -> {
-                        throw NoStackTraceException("未知的书籍路径格式: ${book.bookUrl}")
-                    }
-                }
-                
-                // 从服务器下载文件
-                val inputStream = if (book.bookUrl.startsWith("storage/data/")) {
-                    // 直接通过静态路由下载（带认证）
-                    serverApi.downloadFile(downloadPath)
-                } else {
-                    // 通过 getLocalStoreFile API 下载
-                    serverApi.downloadLocalStoreFile(downloadPath)
-                }
-                
-                // 保存到本地
-                val localUri = LocalBook.saveBookFile(inputStream, fileName)
-                
-                // 更新书籍的 bookUrl 为本地路径
-                val newBookUrl = FileDoc.fromUri(localUri, false).toString()
-                
-                // 由于 bookUrl 是主键，直接修改会导致 save() 插入新记录而不是更新
-                // 需要先删除旧记录，再插入新记录
-                if (oldBookUrl != newBookUrl) {
-                    // 创建旧书籍对象用于删除（只需要 bookUrl 作为主键）
-                    val oldBook = book.copy()
-                    oldBook.bookUrl = oldBookUrl
-                    
-                    // 更新当前书籍的属性，使其成为本地书籍
-                    book.bookUrl = newBookUrl
-                    book.origin = BookType.localTag  // 标记为本地书籍
-                    book.originName = fileName  // 设置原始文件名
-                    book.type = book.type or BookType.local  // 添加本地书籍类型标志
-                    
-                    // 使用 replace 方法：先删除旧记录，再插入新记录
-                    appDb.bookDao.replace(oldBook, book)
-                    
-                    AppLog.put("数据库更新完成: 旧路径=$oldBookUrl, 新路径=$newBookUrl, origin=${book.origin}, originName=${book.originName}")
-                } else {
-                    book.save()
-                }
-                
-                AppLog.put("书籍文件下载完成: ${book.name}, 保存到: $newBookUrl")
-                
-                // 保存 token
-                val (token, expireTime) = serverApi.getTokenInfo()
-                saveTokenInfo(token, expireTime)
-                
-                localUri
-            }
+        // 优先使用 origin 标记判断（不受 bookUrl 修改影响）
+        if (book.origin == BookType.readerServerLocalTag) {
+            return true
         }
+        // 兼容已同步但 origin 未更新的书籍
+        return book.bookUrl.startsWith("storage/")
     }
     
     /**
@@ -634,6 +568,24 @@ object ReaderServerSync {
                 }
                 val serverApi = api ?: throw NoStackTraceException("服务器未配置")
                 serverApi.getBookContent(bookUrl, chapterIndex)
+            }
+        }
+    }
+    
+    /**
+     * 获取服务器本地书籍的图片
+     * @param bookUrl 书籍的 bookUrl
+     * @param imageSrc 图片源路径
+     * @return 图片的字节数据
+     */
+    suspend fun getBookImage(bookUrl: String, imageSrc: String): Result<ByteArray> {
+        return withContext(Dispatchers.IO) {
+            kotlin.runCatching {
+                if (!NetworkUtils.isAvailable()) {
+                    throw NoStackTraceException("网络不可用")
+                }
+                val serverApi = api ?: throw NoStackTraceException("服务器未配置")
+                serverApi.getBookImage(bookUrl, imageSrc)
             }
         }
     }

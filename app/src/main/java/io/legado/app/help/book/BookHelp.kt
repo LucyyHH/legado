@@ -12,6 +12,7 @@ import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.BookSource
 import io.legado.app.help.config.AppConfig
+import io.legado.app.help.ReaderServerSync
 import io.legado.app.model.analyzeRule.AnalyzeUrl
 import io.legado.app.model.localBook.LocalBook
 import io.legado.app.utils.ArchiveUtils
@@ -225,6 +226,13 @@ object BookHelp {
         if (isImageExist(book, src)) {
             return
         }
+        
+        // 服务器本地书籍：通过 API 下载图片
+        if (ReaderServerSync.isServerLocalBook(book)) {
+            saveServerBookImage(book, src, chapter)
+            return
+        }
+        
         val mutex = synchronized(this) {
             downloadImages.getOrPut(src) { Mutex() }
         }
@@ -251,6 +259,41 @@ object BookHelp {
                 }
                 writeImage(book, src, it)
             }
+        } catch (e: Exception) {
+            coroutineContext.ensureActive()
+            val msg = "${book.name} ${chapter?.title} 图片 $src 下载失败\n${e.localizedMessage}"
+            AppLog.put(msg, e)
+        } finally {
+            downloadImages.remove(src)
+            mutex.unlock()
+        }
+    }
+    
+    /**
+     * 保存服务器本地书籍的图片
+     * 通过 ReaderServerSync API 下载图片
+     */
+    private suspend fun saveServerBookImage(
+        book: Book,
+        src: String,
+        chapter: BookChapter? = null
+    ) {
+        val mutex = synchronized(this) {
+            downloadImages.getOrPut(src) { Mutex() }
+        }
+        mutex.lock()
+        try {
+            if (isImageExist(book, src)) {
+                return
+            }
+            // 通过 ReaderServerSync 获取图片字节数据
+            val bytes = ReaderServerSync.getBookImage(book.bookUrl, src)
+                .getOrThrow()
+            
+            if (!checkImage(bytes)) {
+                AppLog.put("${book.name} ${chapter?.title} 图片 $src 下载错误 数据异常")
+            }
+            writeImage(book, src, bytes)
         } catch (e: Exception) {
             coroutineContext.ensureActive()
             val msg = "${book.name} ${chapter?.title} 图片 $src 下载失败\n${e.localizedMessage}"
@@ -409,6 +452,10 @@ object BookHelp {
                 return null
             }
             return string
+        }
+        // 服务器本地书籍不从本地文件读取，返回 null 让调用者通过 API 获取
+        if (ReaderServerSync.isServerLocalBook(book)) {
+            return null
         }
         if (book.isLocal) {
             val string = LocalBook.getContent(book, bookChapter)
