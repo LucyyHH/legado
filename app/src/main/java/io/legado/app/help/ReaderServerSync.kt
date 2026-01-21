@@ -639,6 +639,21 @@ object ReaderServerSync {
     }
     
     /**
+     * 删除服务器上的书籍
+     */
+    suspend fun deleteBook(book: Book): Result<Boolean> {
+        return withContext(Dispatchers.IO) {
+            kotlin.runCatching {
+                if (!NetworkUtils.isAvailable()) {
+                    throw NoStackTraceException("网络不可用")
+                }
+                val serverApi = api ?: throw NoStackTraceException("服务器未配置")
+                serverApi.deleteBook(book)
+            }
+        }
+    }
+    
+    /**
      * 获取章节列表
      */
     suspend fun getChapterList(bookUrl: String): Result<List<io.legado.app.data.entities.BookChapter>> {

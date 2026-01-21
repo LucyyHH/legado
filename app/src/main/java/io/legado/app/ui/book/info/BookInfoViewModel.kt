@@ -514,13 +514,25 @@ class BookInfoViewModel(application: Application) : BaseViewModel(application) {
         return book
     }
 
-    fun delBook(deleteOriginal: Boolean = false, success: (() -> Unit)? = null) {
+    fun delBook(
+        deleteOriginal: Boolean = false,
+        deleteFromServer: Boolean = false,
+        success: (() -> Unit)? = null
+    ) {
         execute {
-            bookData.value?.let {
-                it.delete()
+            bookData.value?.let { book ->
+                // 先删除服务器书籍（如果需要）
+                if (deleteFromServer && ReaderServerSync.isConfigured) {
+                    ReaderServerSync.deleteBook(book).onFailure { e ->
+                        AppLog.put("删除服务器书籍失败: ${e.localizedMessage}")
+                    }
+                }
+                // 清理章节缓存
+                BookHelp.clearCache(book)
+                book.delete()
                 inBookshelf = false
-                if (it.isLocal) {
-                    LocalBook.deleteBook(it, deleteOriginal)
+                if (book.isLocal) {
+                    LocalBook.deleteBook(book, deleteOriginal)
                 }
             }
         }.onSuccess {

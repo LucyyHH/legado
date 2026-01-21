@@ -22,6 +22,7 @@ import io.legado.app.data.entities.BookSource
 import io.legado.app.databinding.ActivityArrangeBookBinding
 import io.legado.app.databinding.DialogEditTextBinding
 import io.legado.app.help.DirectLinkUpload
+import io.legado.app.help.ReaderServerSync
 import io.legado.app.help.book.contains
 import io.legado.app.help.book.isLocal
 import io.legado.app.help.config.AppConfig
@@ -324,18 +325,31 @@ class BookshelfManageActivity :
 
     private fun alertDelSelection() {
         alert(titleResource = R.string.draw, messageResource = R.string.sure_del) {
-            val checkBox = CheckBox(this@BookshelfManageActivity).apply {
+            val deleteFileCheckBox = CheckBox(this@BookshelfManageActivity).apply {
                 setText(R.string.delete_book_file)
                 isChecked = LocalConfig.deleteBookOriginal
             }
-            val view = LinearLayout(this@BookshelfManageActivity).apply {
+            var deleteServerCheckBox: CheckBox? = null
+            val showServerOption = ReaderServerSync.isConfigured
+            
+            val layout = LinearLayout(this@BookshelfManageActivity).apply {
+                orientation = LinearLayout.VERTICAL
                 setPadding(16.dpToPx(), 0, 16.dpToPx(), 0)
-                addView(checkBox)
+                addView(deleteFileCheckBox)
+                
+                if (showServerOption) {
+                    deleteServerCheckBox = CheckBox(this@BookshelfManageActivity).apply {
+                        setText(R.string.delete_from_server)
+                        isChecked = false
+                    }
+                    addView(deleteServerCheckBox)
+                }
             }
-            customView { view }
+            customView { layout }
             okButton {
-                LocalConfig.deleteBookOriginal = checkBox.isChecked
-                viewModel.deleteBook(adapter.selection, checkBox.isChecked)
+                LocalConfig.deleteBookOriginal = deleteFileCheckBox.isChecked
+                val deleteFromServer = deleteServerCheckBox?.isChecked ?: false
+                viewModel.deleteBook(adapter.selection, deleteFileCheckBox.isChecked, deleteFromServer)
             }
             noButton()
         }
@@ -382,23 +396,40 @@ class BookshelfManageActivity :
 
     override fun deleteBook(book: Book) {
         alert(titleResource = R.string.draw, messageResource = R.string.sure_del) {
-            var checkBox: CheckBox? = null
-            if (book.isLocal) {
-                checkBox = CheckBox(this@BookshelfManageActivity).apply {
-                    setText(R.string.delete_book_file)
-                    isChecked = LocalConfig.deleteBookOriginal
-                }
-                val view = LinearLayout(this@BookshelfManageActivity).apply {
+            var deleteFileCheckBox: CheckBox? = null
+            var deleteServerCheckBox: CheckBox? = null
+            val showServerOption = ReaderServerSync.isConfigured
+            
+            if (book.isLocal || showServerOption) {
+                val layout = LinearLayout(this@BookshelfManageActivity).apply {
+                    orientation = LinearLayout.VERTICAL
                     setPadding(16.dpToPx(), 0, 16.dpToPx(), 0)
-                    addView(checkBox)
                 }
-                customView { view }
+                
+                if (book.isLocal) {
+                    deleteFileCheckBox = CheckBox(this@BookshelfManageActivity).apply {
+                        setText(R.string.delete_book_file)
+                        isChecked = LocalConfig.deleteBookOriginal
+                    }
+                    layout.addView(deleteFileCheckBox)
+                }
+                
+                if (showServerOption) {
+                    deleteServerCheckBox = CheckBox(this@BookshelfManageActivity).apply {
+                        setText(R.string.delete_from_server)
+                        isChecked = false
+                    }
+                    layout.addView(deleteServerCheckBox)
+                }
+                
+                customView { layout }
             }
             okButton {
-                if (checkBox != null) {
-                    LocalConfig.deleteBookOriginal = checkBox.isChecked
+                if (deleteFileCheckBox != null) {
+                    LocalConfig.deleteBookOriginal = deleteFileCheckBox.isChecked
                 }
-                viewModel.deleteBook(listOf(book), LocalConfig.deleteBookOriginal)
+                val deleteFromServer = deleteServerCheckBox?.isChecked ?: false
+                viewModel.deleteBook(listOf(book), LocalConfig.deleteBookOriginal, deleteFromServer)
             }
         }
     }

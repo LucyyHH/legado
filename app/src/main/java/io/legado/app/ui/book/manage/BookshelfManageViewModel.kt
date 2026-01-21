@@ -11,6 +11,7 @@ import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookSource
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.isLocal
+import io.legado.app.help.ReaderServerSync
 import io.legado.app.help.book.removeType
 import io.legado.app.help.config.AppConfig
 import io.legado.app.help.coroutine.Coroutine
@@ -52,8 +53,22 @@ class BookshelfManageViewModel(application: Application) : BaseViewModel(applica
         }
     }
 
-    fun deleteBook(books: List<Book>, deleteOriginal: Boolean = false) {
+    fun deleteBook(
+        books: List<Book>,
+        deleteOriginal: Boolean = false,
+        deleteFromServer: Boolean = false
+    ) {
         execute {
+            books.forEach { book ->
+                // 先删除服务器书籍（如果需要）
+                if (deleteFromServer && ReaderServerSync.isConfigured) {
+                    ReaderServerSync.deleteBook(book).onFailure { e ->
+                        AppLog.put("删除服务器书籍失败: ${book.name} - ${e.localizedMessage}")
+                    }
+                }
+                // 清理章节缓存
+                BookHelp.clearCache(book)
+            }
             appDb.bookDao.delete(*books.toTypedArray())
             books.forEach {
                 if (it.isLocal) {

@@ -24,6 +24,7 @@ import io.legado.app.data.entities.BookSource
 import io.legado.app.databinding.ActivityBookInfoBinding
 import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.AppWebDav
+import io.legado.app.help.ReaderServerSync
 import io.legado.app.help.book.addType
 import io.legado.app.help.book.getRemoteUrl
 import io.legado.app.help.book.isAudio
@@ -583,29 +584,47 @@ class BookInfoActivity :
 
     @SuppressLint("InflateParams")
     private fun deleteBook() {
-        viewModel.getBook()?.let {
+        viewModel.getBook()?.let { book ->
             if (LocalConfig.bookInfoDeleteAlert) {
                 alert(
                     titleResource = R.string.draw,
                     messageResource = R.string.sure_del
                 ) {
-                    var checkBox: CheckBox? = null
-                    if (it.isLocal) {
-                        checkBox = CheckBox(this@BookInfoActivity).apply {
-                            setText(R.string.delete_book_file)
-                            isChecked = LocalConfig.deleteBookOriginal
-                        }
-                        val view = LinearLayout(this@BookInfoActivity).apply {
+                    var deleteFileCheckBox: CheckBox? = null
+                    var deleteServerCheckBox: CheckBox? = null
+                    val showServerOption = ReaderServerSync.isConfigured
+                    
+                    if (book.isLocal || showServerOption) {
+                        val layout = LinearLayout(this@BookInfoActivity).apply {
+                            orientation = LinearLayout.VERTICAL
                             setPadding(16.dpToPx(), 0, 16.dpToPx(), 0)
-                            addView(checkBox)
                         }
-                        customView { view }
+                        
+                        if (book.isLocal) {
+                            deleteFileCheckBox = CheckBox(this@BookInfoActivity).apply {
+                                setText(R.string.delete_book_file)
+                                isChecked = LocalConfig.deleteBookOriginal
+                            }
+                            layout.addView(deleteFileCheckBox)
+                        }
+                        
+                        if (showServerOption) {
+                            deleteServerCheckBox = CheckBox(this@BookInfoActivity).apply {
+                                setText(R.string.delete_from_server)
+                                isChecked = false
+                            }
+                            layout.addView(deleteServerCheckBox)
+                        }
+                        
+                        customView { layout }
                     }
+                    
                     yesButton {
-                        if (checkBox != null) {
-                            LocalConfig.deleteBookOriginal = checkBox.isChecked
+                        if (deleteFileCheckBox != null) {
+                            LocalConfig.deleteBookOriginal = deleteFileCheckBox.isChecked
                         }
-                        viewModel.delBook(LocalConfig.deleteBookOriginal) {
+                        val deleteFromServer = deleteServerCheckBox?.isChecked ?: false
+                        viewModel.delBook(LocalConfig.deleteBookOriginal, deleteFromServer) {
                             setResult(RESULT_OK)
                             finish()
                         }
@@ -613,7 +632,7 @@ class BookInfoActivity :
                     noButton()
                 }
             } else {
-                viewModel.delBook(LocalConfig.deleteBookOriginal) {
+                viewModel.delBook(LocalConfig.deleteBookOriginal, false) {
                     setResult(RESULT_OK)
                     finish()
                 }
