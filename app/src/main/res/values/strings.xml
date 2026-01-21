@@ -623,6 +623,8 @@
     <string name="reader_server_sync_book_source_s">与服务器双向同步书源数据</string>
     <string name="reader_server_sync_bookshelf">同步书架</string>
     <string name="reader_server_sync_bookshelf_s">与服务器双向同步书架数据</string>
+    <string name="reader_server_sync_book_group">同步分组</string>
+    <string name="reader_server_sync_book_group_s">与服务器双向同步书籍分组</string>
     <string name="reader_server_sync_progress">同步阅读进度</string>
     <string name="reader_server_sync_progress_s">与服务器同步阅读进度</string>
     <string name="reader_server_sync_rss_source">同步订阅源</string>

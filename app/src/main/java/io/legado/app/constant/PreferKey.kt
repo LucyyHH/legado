@@ -195,6 +195,7 @@ object PreferKey {
     const val readerServerTokenExpire = "readerServerTokenExpire"
     const val readerServerSyncBookSource = "readerServerSyncBookSource"
     const val readerServerSyncBookshelf = "readerServerSyncBookshelf"
+    const val readerServerSyncBookGroup = "readerServerSyncBookGroup"
     const val readerServerSyncProgress = "readerServerSyncProgress"
     const val readerServerSyncRssSource = "readerServerSyncRssSource"
     const val readerServerAutoSync = "readerServerAutoSync"

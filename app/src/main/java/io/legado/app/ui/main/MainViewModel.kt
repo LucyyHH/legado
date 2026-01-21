@@ -107,6 +107,12 @@ class MainViewModel(application: Application) : BaseViewModel(application) {
             kotlin.runCatching {
                 ReaderServerSync.initConfig()
                 if (ReaderServerSync.isOk) {
+                    // 同步分组（在同步书架之前，确保分组信息已就位）
+                    if (AppConfig.readerServerSyncBookGroup) {
+                        ReaderServerSync.syncBookGroups().onFailure {
+                            AppLog.put("Reader Server 分组同步失败: ${it.localizedMessage}", it)
+                        }
+                    }
                     // 同步书架
                     if (AppConfig.readerServerSyncBookshelf) {
                         ReaderServerSync.syncBookshelf().onFailure {

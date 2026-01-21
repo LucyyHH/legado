@@ -4,6 +4,7 @@ import androidx.annotation.Keep
 import io.legado.app.constant.AppLog
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
+import io.legado.app.data.entities.BookGroup
 import io.legado.app.data.entities.BookProgress
 import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.RssSource
@@ -13,7 +14,6 @@ import io.legado.app.help.http.newCallResponseBody
 import io.legado.app.help.http.newCallStrResponse
 import io.legado.app.help.http.okHttpClient
 import io.legado.app.help.http.postJson
-import java.io.InputStream
 import io.legado.app.utils.GSON
 import io.legado.app.utils.fromJsonObject
 import org.jsoup.Jsoup
@@ -54,7 +54,8 @@ class ReaderServerApi(
         private const val API_SAVE_RSS_SOURCES = "$API_PREFIX/saveRssSources"
         private const val API_DELETE_RSS_SOURCES = "$API_PREFIX/deleteRssSources"
         private const val API_SEARCH_BOOK = "$API_PREFIX/searchBook"
-        private const val API_GET_LOCAL_STORE_FILE = "$API_PREFIX/getLocalStoreFile"
+        private const val API_GET_BOOK_GROUPS = "$API_PREFIX/getBookGroups"
+        private const val API_SAVE_BOOK_GROUP = "$API_PREFIX/saveBookGroup"
     }
 
     // 缓存的 accessToken（格式：username:token）
@@ -286,6 +287,37 @@ class ReaderServerApi(
     }
 
     /**
+     * 获取书籍分组列表
+     */
+    suspend fun getBookGroups(): List<BookGroup> {
+        val url = buildAuthUrl(API_GET_BOOK_GROUPS)
+        val response = requestGet(url)
+        
+        val result = GSON.fromJsonObject<ApiResponse<List<BookGroup>>>(response)
+            .getOrNull() ?: throw NoStackTraceException("解析分组列表失败")
+        
+        if (!result.isSuccess) {
+            throw NoStackTraceException(result.errorMsg ?: "获取分组列表失败")
+        }
+        
+        return result.data ?: emptyList()
+    }
+
+    /**
+     * 保存书籍分组
+     */
+    suspend fun saveBookGroup(bookGroup: BookGroup): Boolean {
+        val url = buildAuthUrl(API_SAVE_BOOK_GROUP)
+        val body = GSON.toJson(bookGroup)
+        val response = requestPost(url, body)
+        
+        val result = GSON.fromJsonObject<ApiResponse<Any>>(response)
+            .getOrNull() ?: throw NoStackTraceException("解析保存分组响应失败")
+        
+        return result.isSuccess
+    }
+
+    /**
      * 获取章节列表
      */
     suspend fun getChapterList(bookUrl: String): List<BookChapter> {
@@ -434,52 +466,6 @@ class ReaderServerApi(
         }
         
         return result.data ?: emptyList()
-    }
-
-    /**
-     * 下载本地存储的书籍文件（通过 getLocalStoreFile API）
-     * @param path 文件相对路径，如 "/xxx.epub"
-     * @return 文件的 InputStream
-     */
-    suspend fun downloadLocalStoreFile(path: String): InputStream {
-        val url = buildAuthUrl(API_GET_LOCAL_STORE_FILE, mapOf("path" to path))
-        
-        AppLog.put("ReaderServerApi: 通过 API 下载文件 $path")
-        
-        val responseBody = okHttpClient.newCallResponseBody {
-            url(url)
-        }
-        
-        return responseBody.byteStream()
-    }
-    
-    /**
-     * 直接下载文件（通过静态路由，带认证）
-     * @param path 文件路径，如 "/epub/xxx/book.epub"
-     * @return 文件的 InputStream
-     */
-    suspend fun downloadFile(path: String): InputStream {
-        // 静态路由也需要带上 accessToken 认证参数
-        val accessToken = getValidAccessToken()
-        val encodedToken = java.net.URLEncoder.encode(accessToken, "UTF-8").replace("+", "%20")
-        // 对路径进行 URL 编码，但保留 / 字符
-        // 注意：URLEncoder 会把空格编码为 +，但 URL 路径中应该使用 %20
-        val encodedPath = path.split("/").joinToString("/") { segment ->
-            if (segment.isNotEmpty()) {
-                java.net.URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
-            } else {
-                segment
-            }
-        }
-        val url = "$baseUrl$encodedPath?accessToken=$encodedToken"
-        
-        AppLog.put("ReaderServerApi: 直接下载文件 $url")
-        
-        val responseBody = okHttpClient.newCallResponseBody {
-            url(url)
-        }
-        
-        return responseBody.byteStream()
     }
 
     /**

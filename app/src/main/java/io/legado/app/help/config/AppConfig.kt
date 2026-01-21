@@ -769,6 +769,12 @@ object AppConfig : SharedPreferences.OnSharedPreferenceChangeListener {
             appCtx.putPrefBoolean(PreferKey.readerServerSyncBookshelf, value)
         }
 
+    var readerServerSyncBookGroup: Boolean
+        get() = appCtx.getPrefBoolean(PreferKey.readerServerSyncBookGroup, true)
+        set(value) {
+            appCtx.putPrefBoolean(PreferKey.readerServerSyncBookGroup, value)
+        }
+
     var readerServerSyncProgress: Boolean
         get() = appCtx.getPrefBoolean(PreferKey.readerServerSyncProgress, true)
         set(value) {

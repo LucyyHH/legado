@@ -5,6 +5,7 @@ import io.legado.app.constant.BookType
 import io.legado.app.constant.PreferKey
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.Book
+import io.legado.app.data.entities.BookGroup
 import io.legado.app.data.entities.BookProgress
 import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.RssSource
@@ -62,6 +63,7 @@ object ReaderServerSync {
                         tokenExpireTime = tokenExpireTime,
                         syncBookSource = appCtx.getPrefBoolean(PreferKey.readerServerSyncBookSource, true),
                         syncBookshelf = appCtx.getPrefBoolean(PreferKey.readerServerSyncBookshelf, true),
+                        syncBookGroup = appCtx.getPrefBoolean(PreferKey.readerServerSyncBookGroup, true),
                         syncBookProgress = appCtx.getPrefBoolean(PreferKey.readerServerSyncProgress, true),
                         syncRssSource = appCtx.getPrefBoolean(PreferKey.readerServerSyncRssSource, true)
                     )
@@ -229,6 +231,74 @@ object ReaderServerSync {
     }
     
     /**
+     * 同步书籍分组
+     * 双向同步：合并分组列表，服务器优先
+     */
+    suspend fun syncBookGroups(): Result<SyncResult> {
+        return withContext(Dispatchers.IO) {
+            kotlin.runCatching {
+                if (!NetworkUtils.isAvailable()) {
+                    throw NoStackTraceException("网络不可用")
+                }
+                val serverApi = api ?: throw NoStackTraceException("服务器未配置")
+                
+                currentCoroutineContext().ensureActive()
+                
+                // 获取服务器分组
+                val serverGroups = serverApi.getBookGroups()
+                val serverGroupMap = serverGroups.associateBy { it.groupId }
+                
+                // 获取本地分组（只获取用户自定义分组，groupId > 0）
+                val localGroups = appDb.bookGroupDao.all.filter { it.groupId > 0 }
+                val localGroupMap = localGroups.associateBy { it.groupId }
+                
+                var uploaded = 0
+                var downloaded = 0
+                var updated = 0
+                
+                // 先处理服务器分组（服务器优先，下载/更新本地）
+                for (serverGroup in serverGroups) {
+                    if (serverGroup.groupId > 0) {
+                        val localGroup = localGroupMap[serverGroup.groupId]
+                        if (localGroup == null) {
+                            // 本地没有，添加到本地
+                            appDb.bookGroupDao.insert(serverGroup)
+                            downloaded++
+                        } else {
+                            // 本地有，用服务器的更新本地
+                            if (localGroup.groupName != serverGroup.groupName ||
+                                localGroup.order != serverGroup.order) {
+                                // 用服务器的 groupName 和 order 更新本地，保留本地独有的字段
+                                localGroup.groupName = serverGroup.groupName
+                                localGroup.order = serverGroup.order
+                                appDb.bookGroupDao.update(localGroup)
+                                updated++
+                            }
+                        }
+                    }
+                }
+                
+                // 再处理本地独有的分组（上传到服务器）
+                for (localGroup in localGroups) {
+                    if (!serverGroupMap.containsKey(localGroup.groupId)) {
+                        // 服务器没有，上传
+                        if (serverApi.saveBookGroup(localGroup)) {
+                            uploaded++
+                        }
+                    }
+                }
+                
+                // 保存token
+                val (token, expireTime) = serverApi.getTokenInfo()
+                saveTokenInfo(token, expireTime)
+                
+                AppLog.put("分组同步完成: 上传 $uploaded, 下载 $downloaded, 更新 $updated")
+                SyncResult(uploaded, downloaded, updated)
+            }
+        }
+    }
+    
+    /**
      * 同步书架
      * 双向同步：合并书架，阅读进度取较新的
      */
@@ -271,6 +341,8 @@ object ReaderServerSync {
                     } else {
                         // 都有，先检查是否需要修复服务器本地书籍的 origin 和 bookUrl
                         var needUpdate = false
+                        var needUpload = false
+                        
                         if (serverBook.bookUrl.startsWith("storage/")) {
                             // 服务器本地书籍，确保 origin 和 bookUrl 正确
                             if (localBook.origin != BookType.readerServerLocalTag) {
@@ -284,6 +356,19 @@ object ReaderServerSync {
                             }
                         }
                         
+                        // 同步分组（group 字段）
+                        if (localBook.group == 0L && serverBook.group != 0L) {
+                            // 本地没分组，服务器有分组，使用服务器的
+                            localBook.group = serverBook.group
+                            needUpdate = true
+                        } else if (localBook.group != 0L && serverBook.group == 0L) {
+                            // 本地有分组，服务器没分组，上传本地的
+                            needUpload = true
+                        } else if (localBook.group != serverBook.group && localBook.group != 0L) {
+                            // 都有分组但不同，以本地为准上传
+                            needUpload = true
+                        }
+                        
                         // 比较进度
                         if (shouldUpdateProgress(localBook, serverBook)) {
                             // 服务器进度更新，更新本地
@@ -294,13 +379,13 @@ object ReaderServerSync {
                             localBook.syncTime = System.currentTimeMillis()
                             appDb.bookDao.update(localBook)
                             updated++
-                        } else if (localBook.durChapterTime > serverBook.durChapterTime) {
-                            // 本地进度更新，上传
+                        } else if (localBook.durChapterTime > serverBook.durChapterTime || needUpload) {
+                            // 本地进度更新或需要上传分组，上传
                             if (serverApi.saveBook(localBook)) {
                                 uploaded++
                             }
                         } else if (needUpdate) {
-                            // origin 或 bookUrl 被修复，需要更新数据库
+                            // origin、bookUrl 或 group 被修复，需要更新数据库
                             localBook.syncTime = System.currentTimeMillis()
                             appDb.bookDao.update(localBook)
                             updated++
@@ -494,6 +579,17 @@ object ReaderServerSync {
                 }
                 
                 val results = mutableMapOf<String, SyncResult>()
+                
+                // 同步分组（在同步书架之前，确保分组信息已就位）
+                if (config?.syncBookGroup != false) {
+                    syncBookGroups().onSuccess {
+                        results["bookGroup"] = it
+                    }.onFailure {
+                        AppLog.put("同步分组失败: ${it.message}", it)
+                    }
+                    
+                    currentCoroutineContext().ensureActive()
+                }
                 
                 // 同步书源
                 syncBookSources().onSuccess {
