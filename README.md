@@ -6,7 +6,7 @@
 </a>
 
 <div align="center">
-<img width="125" height="125" src="https://github.com/gedoor/legado/raw/master/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" alt="legado"/>  
+<img width="125" height="125" src="https://github.com/LucyyHH/legado/raw/master/app/src/main/res/mipmap-xxxhdpi/ic_launcher_lc.png" alt="legado"/>  
   
 Legado / 开源阅读 - 兼容 <a href="https://github.com/hectorqin/reader/" target="_blank">hectorqin_reader</a> 服务器
 <br>
@@ -35,6 +35,7 @@ Legado is a free and open source novel reader for Android.
 7.支持高度自定义阅读界面，切换字体、颜色、背景、行距、段距、加粗、简繁转换等。<br>
 8.支持多种翻页模式，覆盖、仿真、滑动、滚动等。<br>
 9.软件开源，持续优化，无广告。
+10.支持 Reader Server 远程阅读 (https://github.com/hectorqin/reader)，配置在备份与恢复-阅读服务器设置里，输入服务器地址、用户名、密码，点击立即同步会把服务器的书架、分组、书源、订阅源同步到本地
 </details>
 
 <a href="#readme">

@@ -16,7 +16,7 @@ plugins {
 apply from: 'download.gradle'
 
 static def releaseTime() {
-    return new Date().format("yy.MMddHH", TimeZone.getTimeZone("GMT+8"))
+    return new Date().format("yy.MMddHHmm", TimeZone.getTimeZone("GMT+8"))
 }
 
 def name = "legado"
@@ -47,7 +47,7 @@ android {
         }
     }
     defaultConfig {
-        applicationId "io.legado.app"
+        applicationId "io.legado.lc.app"
         minSdk 21
         targetSdk 36
         versionCode 10000 + gitCommits
