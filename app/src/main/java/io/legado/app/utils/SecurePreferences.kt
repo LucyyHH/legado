@@ -96,34 +96,4 @@ object SecurePreferences {
     fun contains(key: String): Boolean {
         return securePrefs.contains(key)
     }
-    
-    /**
-     * 从普通 SharedPreferences 迁移敏感数据到加密存储
-     * @param normalPrefs 普通 SharedPreferences
-     * @param keys 需要迁移的键列表
-     */
-    fun migrateFromNormalPrefs(normalPrefs: SharedPreferences, vararg keys: String) {
-        var migrated = false
-        keys.forEach { key ->
-            if (normalPrefs.contains(key) && !securePrefs.contains(key)) {
-                val value = normalPrefs.getString(key, null)
-                if (!value.isNullOrEmpty()) {
-                    putString(key, value)
-                    migrated = true
-                }
-            }
-        }
-        
-        // 迁移完成后，从普通存储中删除敏感数据
-        if (migrated) {
-            val editor = normalPrefs.edit()
-            keys.forEach { key ->
-                if (normalPrefs.contains(key)) {
-                    editor.remove(key)
-                }
-            }
-            editor.apply()
-            AppLog.put("敏感数据已迁移到加密存储")
-        }
-    }
 }

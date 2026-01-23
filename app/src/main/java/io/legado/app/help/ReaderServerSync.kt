@@ -14,7 +14,6 @@ import io.legado.app.exception.NoStackTraceException
 import io.legado.app.model.remote.ReaderServerApi
 import io.legado.app.utils.NetworkUtils
 import io.legado.app.utils.SecurePreferences
-import io.legado.app.utils.defaultSharedPreferences
 import io.legado.app.utils.getPrefBoolean
 import io.legado.app.utils.getPrefString
 import io.legado.app.utils.putPrefString
@@ -48,9 +47,6 @@ object ReaderServerSync {
             kotlin.runCatching {
                 api = null
                 config = null
-                
-                // 迁移旧数据到加密存储（仅首次运行）
-                migrateToSecureStorage()
                 
                 val serverUrl = appCtx.getPrefString(PreferKey.readerServerUrl)
                 val username = appCtx.getPrefString(PreferKey.readerServerUsername)
@@ -121,46 +117,6 @@ object ReaderServerSync {
     private fun saveTokenInfo(token: String?, expireTime: Long) {
         SecurePreferences.putString(PreferKey.readerServerToken, token ?: "")
         SecurePreferences.putLong(PreferKey.readerServerTokenExpire, expireTime)
-    }
-    
-    /**
-     * 从普通 SharedPreferences 迁移敏感数据到加密存储
-     * 仅在首次运行时执行
-     */
-    private fun migrateToSecureStorage() {
-        val normalPrefs = appCtx.defaultSharedPreferences
-        
-        // 迁移密码
-        if (normalPrefs.contains(PreferKey.readerServerPassword) && 
-            !SecurePreferences.contains(PreferKey.readerServerPassword)) {
-            val password = normalPrefs.getString(PreferKey.readerServerPassword, null)
-            if (!password.isNullOrEmpty()) {
-                SecurePreferences.putString(PreferKey.readerServerPassword, password)
-                // 从普通存储中删除密码
-                normalPrefs.edit().remove(PreferKey.readerServerPassword).apply()
-                AppLog.put("Reader Server 密码已迁移到加密存储")
-            }
-        }
-        
-        // 迁移 token
-        if (normalPrefs.contains(PreferKey.readerServerToken) && 
-            !SecurePreferences.contains(PreferKey.readerServerToken)) {
-            val token = normalPrefs.getString(PreferKey.readerServerToken, null)
-            if (!token.isNullOrEmpty()) {
-                SecurePreferences.putString(PreferKey.readerServerToken, token)
-                normalPrefs.edit().remove(PreferKey.readerServerToken).apply()
-            }
-        }
-        
-        // 迁移 token 过期时间
-        if (normalPrefs.contains(PreferKey.readerServerTokenExpire) && 
-            !SecurePreferences.contains(PreferKey.readerServerTokenExpire)) {
-            val expireTime = normalPrefs.getString(PreferKey.readerServerTokenExpire, "0")?.toLongOrNull() ?: 0L
-            if (expireTime > 0) {
-                SecurePreferences.putLong(PreferKey.readerServerTokenExpire, expireTime)
-                normalPrefs.edit().remove(PreferKey.readerServerTokenExpire).apply()
-            }
-        }
     }
     
     /**
