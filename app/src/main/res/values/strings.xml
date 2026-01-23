@@ -633,8 +633,12 @@
     <string name="reader_server_auto_sync_s">刷新书架时自动与服务器同步</string>
     <string name="reader_server_sync_now">立即同步</string>
     <string name="reader_server_sync_now_s">立即与服务器进行全量数据同步</string>
-    <string name="reader_server_strict_ssl">严格SSL验证</string>
+    <string name="reader_server_strict_ssl">SSL验证</string>
     <string name="reader_server_strict_ssl_s">启用后将验证服务器SSL证书，推荐公网使用。本地/局域网如使用自签名证书请关闭</string>
+    <string name="reader_server_ssl_hint_title">SSL 验证提示</string>
+    <string name="reader_server_http_detected">检测到服务器地址使用 HTTP 协议，无法进行 SSL 验证</string>
+    <string name="reader_server_ssl_error">SSL 证书验证失败，可能是自签名证书或证书无效</string>
+    <string name="reader_server_disable_ssl_confirm">是否关闭 SSL 验证？</string>
     <string name="reader_server_connect_success">连接成功</string>
     <string name="reader_server_connect_fail">连接失败</string>
     <string name="reader_server_sync_success">同步成功</string>

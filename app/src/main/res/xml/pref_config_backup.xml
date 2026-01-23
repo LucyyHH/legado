@@ -76,7 +76,7 @@
             app:iconSpaceReserved="false" />
 
         <io.legado.app.lib.prefs.SwitchPreference
-            android:defaultValue="false"
+            android:defaultValue="true"
             android:key="readerServerStrictSsl"
             android:summary="@string/reader_server_strict_ssl_s"
             android:title="@string/reader_server_strict_ssl"

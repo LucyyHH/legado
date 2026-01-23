@@ -465,6 +465,22 @@ class BackupConfigFragment : PreferenceFragment(),
             appCtx.toastOnUi(R.string.reader_server_not_configured)
             return
         }
+        
+        val serverUrl = AppConfig.readerServerUrl ?: ""
+        
+        // 检测 HTTP URL，如果 SSL 验证开启则提示
+        if (serverUrl.startsWith("http://", ignoreCase = true) && AppConfig.readerServerStrictSsl) {
+            showSslHintDialog(getString(R.string.reader_server_http_detected))
+            return
+        }
+        
+        doTestReaderServerConnection()
+    }
+    
+    /**
+     * 执行实际的连接测试
+     */
+    private fun doTestReaderServerConnection() {
         waitDialog.setText(R.string.testing_connection)
         waitDialog.show()
         lifecycleScope.launch {
@@ -482,15 +498,51 @@ class BackupConfigFragment : PreferenceFragment(),
                         appCtx.toastOnUi(R.string.reader_server_connect_fail)
                     }
                 }.onFailure { e ->
-                    AppLog.put("Reader Server 连接测试失败: ${e.localizedMessage}", e)
-                    appCtx.toastOnUi(getString(R.string.reader_server_connect_fail) + "\n${e.localizedMessage}")
+                    handleConnectionError(e)
                 }
             } catch (e: Exception) {
-                AppLog.put("Reader Server 连接测试失败: ${e.localizedMessage}", e)
-                appCtx.toastOnUi(getString(R.string.reader_server_connect_fail) + "\n${e.localizedMessage}")
+                handleConnectionError(e)
             } finally {
                 waitDialog.dismiss()
             }
+        }
+    }
+    
+    /**
+     * 处理连接错误，检测是否为 SSL 相关错误
+     */
+    private fun handleConnectionError(e: Throwable) {
+        AppLog.put("Reader Server 连接测试失败: ${e.localizedMessage}", e)
+        
+        // 检测是否为 SSL 相关错误
+        val isSslError = e is javax.net.ssl.SSLException ||
+                e is javax.net.ssl.SSLHandshakeException ||
+                e.cause is javax.net.ssl.SSLException ||
+                e.cause is javax.net.ssl.SSLHandshakeException ||
+                e.message?.contains("SSL", ignoreCase = true) == true ||
+                e.message?.contains("Certificate", ignoreCase = true) == true
+        
+        if (isSslError && AppConfig.readerServerStrictSsl) {
+            showSslHintDialog(getString(R.string.reader_server_ssl_error))
+        } else {
+            appCtx.toastOnUi(getString(R.string.reader_server_connect_fail) + "\n${e.localizedMessage}")
+        }
+    }
+    
+    /**
+     * 显示 SSL 提示对话框
+     */
+    private fun showSslHintDialog(message: String) {
+        alert(R.string.reader_server_ssl_hint_title) {
+            setMessage(message + "\n\n" + getString(R.string.reader_server_disable_ssl_confirm))
+            okButton {
+                AppConfig.readerServerStrictSsl = false
+                // 更新设置界面的开关状态
+                findPreference<io.legado.app.lib.prefs.SwitchPreference>(PreferKey.readerServerStrictSsl)?.isChecked = false
+                // 自动重试连接
+                doTestReaderServerConnection()
+            }
+            cancelButton()
         }
     }
 

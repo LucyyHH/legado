@@ -795,7 +795,7 @@ object AppConfig : SharedPreferences.OnSharedPreferenceChangeListener {
         }
 
     var readerServerStrictSsl: Boolean
-        get() = appCtx.getPrefBoolean(PreferKey.readerServerStrictSsl, false)
+        get() = appCtx.getPrefBoolean(PreferKey.readerServerStrictSsl, true)
         set(value) {
             appCtx.putPrefBoolean(PreferKey.readerServerStrictSsl, value)
         }
