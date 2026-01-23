@@ -9,6 +9,8 @@ import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.BookSource
 import io.legado.app.exception.ConcurrentException
+import io.legado.app.exception.NoStackTraceException
+import io.legado.app.help.ReaderServerSync
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.isLocal
 import io.legado.app.help.config.AppConfig
@@ -49,6 +51,19 @@ object CacheBook {
     @Synchronized
     fun getOrCreate(bookUrl: String): CacheBookModel? {
         val book = appDb.bookDao.getBook(bookUrl) ?: return null
+        
+        // 服务器书籍特殊处理：不需要书源，通过 API 获取内容
+        if (ReaderServerSync.isServerLocalBook(book)) {
+            var cacheBook = cacheBookMap[bookUrl]
+            if (cacheBook != null) {
+                cacheBook.book = book
+                return cacheBook
+            }
+            cacheBook = CacheBookModel(null, book)
+            cacheBookMap[bookUrl] = cacheBook
+            return cacheBook
+        }
+        
         val bookSource = appDb.bookSourceDao.getBookSource(book.origin) ?: return null
         updateBookSource(bookSource)
         var cacheBook = cacheBookMap[bookUrl]
@@ -81,7 +96,7 @@ object CacheBook {
     private fun updateBookSource(newBookSource: BookSource) {
         cacheBookMap.forEach {
             val model = it.value
-            if (model.bookSource.bookSourceUrl == newBookSource.bookSourceUrl) {
+            if (model.bookSource?.bookSourceUrl == newBookSource.bookSourceUrl) {
                 model.bookSource = newBookSource
             }
         }
@@ -190,7 +205,7 @@ object CacheBook {
     val successDownloadSet = linkedSetOf<String>()
     val errorDownloadMap = hashMapOf<String, Int>()
 
-    class CacheBookModel(var bookSource: BookSource, var book: Book) {
+    class CacheBookModel(var bookSource: BookSource?, var book: Book) {
 
         private val waitDownloadSet = linkedSetOf<Int>()
         private val onDownloadSet = linkedSetOf<Int>()
@@ -300,6 +315,38 @@ object CacheBook {
         }
 
         /**
+         * 从服务器下载章节内容（用于服务器本地书籍）
+         */
+        private fun downloadFromServer(
+            scope: CoroutineScope,
+            context: CoroutineContext,
+            chapter: BookChapter
+        ) {
+            Coroutine.async(scope, context, executeContext = context) {
+                ReaderServerSync.getBookContent(book.bookUrl, chapter.index).getOrThrow()
+            }.onSuccess { content ->
+                if (content.isNotBlank()) {
+                    BookHelp.saveText(book, chapter, content)
+                    postEvent(EventBus.SAVE_CONTENT, Pair(book, chapter))
+                    onSuccess(chapter)
+                } else {
+                    onError(chapter, NoStackTraceException("章节内容为空"))
+                }
+            }.onError {
+                onPreError(chapter, it)
+                //出现错误等待一秒后重新加入待下载列表
+                delay(1000)
+                onPostError(chapter, it)
+            }.onCancel {
+                onCancel(chapter.index)
+            }.onFinally {
+                onFinally()
+            }.let {
+                tasks.add(it)
+            }
+        }
+
+        /**
          * 从待下载列表内取第一条下载
          */
         @Synchronized
@@ -334,7 +381,9 @@ object CacheBook {
             if (BookHelp.hasContent(book, chapter)) {
                 Coroutine.async(scope, context, executeContext = context) {
                     BookHelp.getContent(book, chapter)?.let {
-                        BookHelp.saveImages(bookSource, book, chapter, it, 1)
+                        bookSource?.let { source ->
+                            BookHelp.saveImages(source, book, chapter, it, 1)
+                        }
                     }
                 }.onSuccess {
                     onSuccess(chapter)
@@ -352,9 +401,17 @@ object CacheBook {
                 }
                 return
             }
+            
+            // 服务器书籍：通过 API 获取内容
+            if (bookSource == null) {
+                downloadFromServer(scope, context, chapter)
+                return
+            }
+            
+            // 有书源的书籍：通过书源解析获取内容
             WebBook.getContent(
                 scope,
-                bookSource,
+                bookSource!!,
                 book,
                 chapter,
                 context = context,
@@ -384,7 +441,17 @@ object CacheBook {
                 waitDownloadSet.remove(chapter.index)
             }
             try {
-                val content = WebBook.getContentAwait(bookSource, book, chapter)
+                val content = if (bookSource == null) {
+                    // 服务器书籍：通过 API 获取内容
+                    val serverContent = ReaderServerSync.getBookContent(book.bookUrl, chapter.index).getOrThrow()
+                    if (serverContent.isNotBlank()) {
+                        BookHelp.saveText(book, chapter, serverContent)
+                        postEvent(EventBus.SAVE_CONTENT, Pair(book, chapter))
+                    }
+                    serverContent
+                } else {
+                    WebBook.getContentAwait(bookSource!!, book, chapter)
+                }
                 onSuccess(chapter)
                 ReadBook.downloadedChapters.add(chapter.index)
                 ReadBook.downloadFailChapters.remove(chapter.index)
@@ -414,9 +481,41 @@ object CacheBook {
             }
             onDownloadSet.add(chapter.index)
             waitDownloadSet.remove(chapter.index)
+            
+            // 服务器书籍：通过 API 获取内容
+            if (bookSource == null) {
+                Coroutine.async(scope, IO) {
+                    ReaderServerSync.getBookContent(book.bookUrl, chapter.index).getOrThrow()
+                }.onSuccess { content ->
+                    if (content.isNotBlank()) {
+                        BookHelp.saveText(book, chapter, content)
+                        postEvent(EventBus.SAVE_CONTENT, Pair(book, chapter))
+                        onSuccess(chapter)
+                        ReadBook.downloadedChapters.add(chapter.index)
+                        ReadBook.downloadFailChapters.remove(chapter.index)
+                        downloadFinish(chapter, content, resetPageOffset)
+                    } else {
+                        onError(chapter, NoStackTraceException("章节内容为空"))
+                        downloadFinish(chapter, "章节内容为空", resetPageOffset)
+                    }
+                }.onError {
+                    onError(chapter, it)
+                    ReadBook.downloadFailChapters[chapter.index] =
+                        (ReadBook.downloadFailChapters[chapter.index] ?: 0) + 1
+                    downloadFinish(chapter, "获取正文失败\n${it.localizedMessage}", resetPageOffset)
+                }.onCancel {
+                    onCancel(chapter.index)
+                    downloadFinish(chapter, "download canceled", resetPageOffset, true)
+                }.onFinally {
+                    postEvent(EventBus.UP_DOWNLOAD, book.bookUrl)
+                }.start()
+                return
+            }
+            
+            // 有书源的书籍：通过书源解析获取内容
             WebBook.getContent(
                 scope,
-                bookSource,
+                bookSource!!,
                 book,
                 chapter,
                 start = CoroutineStart.LAZY,

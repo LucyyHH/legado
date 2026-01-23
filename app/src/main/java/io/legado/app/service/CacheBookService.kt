@@ -11,6 +11,7 @@ import io.legado.app.constant.EventBus
 import io.legado.app.constant.IntentAction
 import io.legado.app.constant.NotificationId
 import io.legado.app.data.appDb
+import io.legado.app.help.ReaderServerSync
 import io.legado.app.help.book.update
 import io.legado.app.help.config.AppConfig
 import io.legado.app.model.CacheBook
@@ -109,29 +110,52 @@ class CacheBookService : BaseService() {
                 cacheBook.setLoading()
                 mutex.withLock {
                     val name = book.name
-                    if (book.tocUrl.isEmpty()) {
-                        kotlin.runCatching {
-                            WebBook.getBookInfoAwait(cacheBook.bookSource, book)
-                        }.onFailure {
+                    
+                    // 服务器书籍：通过 API 获取章节列表
+                    if (cacheBook.bookSource == null) {
+                        ReaderServerSync.initConfig()
+                        ReaderServerSync.getChapterList(book.bookUrl).onFailure {
+                            if (book.totalChapterNum > 0) {
+                                book.totalChapterNum = 0
+                                book.update()
+                            }
                             removeDownload(bookUrl)
-                            val msg = "《$name》目录为空且加载详情页失败\n${it.localizedMessage}"
+                            val msg = "《$name》从服务器获取目录失败\n${it.localizedMessage}"
                             AppLog.put(msg, it, true)
                             return@execute
+                        }.getOrNull()?.let { chapters ->
+                            if (chapters.isNotEmpty()) {
+                                appDb.bookChapterDao.insert(*chapters.toTypedArray())
+                                book.totalChapterNum = chapters.size
+                                book.update()
+                            }
                         }
-                    }
-                    WebBook.getChapterListAwait(cacheBook.bookSource, book).onFailure {
-                        if (book.totalChapterNum > 0) {
-                            book.totalChapterNum = 0
-                            book.update()
+                    } else {
+                        // 有书源的书籍：通过书源获取章节列表
+                        if (book.tocUrl.isEmpty()) {
+                            kotlin.runCatching {
+                                WebBook.getBookInfoAwait(cacheBook.bookSource!!, book)
+                            }.onFailure {
+                                removeDownload(bookUrl)
+                                val msg = "《$name》目录为空且加载详情页失败\n${it.localizedMessage}"
+                                AppLog.put(msg, it, true)
+                                return@execute
+                            }
                         }
-                        removeDownload(bookUrl)
-                        val msg = "《$name》目录为空且加载目录失败\n${it.localizedMessage}"
-                        AppLog.put(msg, it, true)
-                        return@execute
-                    }.getOrNull()?.let { toc ->
-                        appDb.bookChapterDao.insert(*toc.toTypedArray())
+                        WebBook.getChapterListAwait(cacheBook.bookSource!!, book).onFailure {
+                            if (book.totalChapterNum > 0) {
+                                book.totalChapterNum = 0
+                                book.update()
+                            }
+                            removeDownload(bookUrl)
+                            val msg = "《$name》目录为空且加载目录失败\n${it.localizedMessage}"
+                            AppLog.put(msg, it, true)
+                            return@execute
+                        }.getOrNull()?.let { toc ->
+                            appDb.bookChapterDao.insert(*toc.toTypedArray())
+                        }
+                        book.update()
                     }
-                    book.update()
                 }
             }
             val end2 = if (end < 0) {
