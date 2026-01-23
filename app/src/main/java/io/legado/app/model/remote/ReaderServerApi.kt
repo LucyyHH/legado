@@ -10,10 +10,12 @@ import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.RssSource
 import io.legado.app.data.entities.Server
 import io.legado.app.exception.NoStackTraceException
+import io.legado.app.help.config.AppConfig
 import io.legado.app.help.http.newCallResponseBody
 import io.legado.app.help.http.newCallStrResponse
 import io.legado.app.help.http.okHttpClient
 import io.legado.app.help.http.postJson
+import io.legado.app.help.http.secureOkHttpClient
 import io.legado.app.utils.GSON
 import io.legado.app.utils.fromJsonObject
 import org.jsoup.Jsoup
@@ -33,6 +35,16 @@ class ReaderServerApi(
     private val username: String,
     private val password: String
 ) {
+    /**
+     * 根据用户配置选择 HTTP 客户端
+     * 如果启用严格 SSL 验证，使用安全客户端；否则使用默认客户端
+     */
+    private val httpClient get() = if (AppConfig.readerServerStrictSsl) {
+        secureOkHttpClient
+    } else {
+        okHttpClient
+    }
+
     companion object {
         private const val TAG = "ReaderServerApi"
         private const val API_PREFIX = "/reader3"
@@ -126,7 +138,7 @@ class ReaderServerApi(
         
         AppLog.put("ReaderServerApi: 正在登录 $url")
         
-        val response = okHttpClient.newCallStrResponse {
+        val response = httpClient.newCallStrResponse {
             url(url)
             postJson(loginBody)
         }
@@ -510,7 +522,7 @@ class ReaderServerApi(
         
         val url = "$baseUrl$encodedPath?accessToken=$encodedToken"
         
-        val responseBody = okHttpClient.newCallResponseBody {
+        val responseBody = httpClient.newCallResponseBody {
             url(url)
         }
         
@@ -544,7 +556,7 @@ class ReaderServerApi(
      * GET 请求
      */
     private suspend fun requestGet(url: String): String {
-        val response = okHttpClient.newCallStrResponse {
+        val response = httpClient.newCallStrResponse {
             url(url)
         }
         
@@ -559,7 +571,7 @@ class ReaderServerApi(
      * POST 请求
      */
     private suspend fun requestPost(url: String, body: String): String {
-        val response = okHttpClient.newCallStrResponse {
+        val response = httpClient.newCallStrResponse {
             url(url)
             postJson(body)
         }

@@ -793,6 +793,12 @@ object AppConfig : SharedPreferences.OnSharedPreferenceChangeListener {
             appCtx.putPrefBoolean(PreferKey.readerServerAutoSync, value)
         }
 
+    var readerServerStrictSsl: Boolean
+        get() = appCtx.getPrefBoolean(PreferKey.readerServerStrictSsl, false)
+        set(value) {
+            appCtx.putPrefBoolean(PreferKey.readerServerStrictSsl, value)
+        }
+
     val readerServerConfigured: Boolean
         get() = !readerServerUrl.isNullOrBlank() && !readerServerUsername.isNullOrBlank()
 

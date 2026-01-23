@@ -199,4 +199,5 @@ object PreferKey {
     const val readerServerSyncProgress = "readerServerSyncProgress"
     const val readerServerSyncRssSource = "readerServerSyncRssSource"
     const val readerServerAutoSync = "readerServerAutoSync"
+    const val readerServerStrictSsl = "readerServerStrictSsl"
 }

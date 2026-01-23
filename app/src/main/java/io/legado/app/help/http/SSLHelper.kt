@@ -20,6 +20,33 @@ import javax.net.ssl.*
 object SSLHelper {
 
     /**
+     * 获取系统默认的安全 TrustManager
+     * 使用系统内置的 CA 证书进行验证
+     */
+    val defaultTrustManager: X509TrustManager by lazy {
+        val trustManagerFactory = TrustManagerFactory.getInstance(
+            TrustManagerFactory.getDefaultAlgorithm()
+        )
+        trustManagerFactory.init(null as KeyStore?)
+        trustManagerFactory.trustManagers
+            .filterIsInstance<X509TrustManager>()
+            .first()
+    }
+
+    /**
+     * 获取系统默认的安全 SSLSocketFactory
+     */
+    val defaultSSLSocketFactory: SSLSocketFactory by lazy {
+        try {
+            val sslContext = SSLContext.getInstance("TLS")
+            sslContext.init(null, arrayOf(defaultTrustManager), SecureRandom())
+            sslContext.socketFactory
+        } catch (e: Exception) {
+            throw RuntimeException(e)
+        }
+    }
+
+    /**
      * 为了解决客户端不信任服务器数字证书的问题，
      * 网络上大部分的解决方案都是让客户端不对证书做任何检查，
      * 这是一种有很大安全漏洞的办法

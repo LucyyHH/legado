@@ -119,6 +119,45 @@ val okHttpClient: OkHttpClient by lazy {
     }
 }
 
+/**
+ * 安全的 OkHttpClient，启用严格 SSL 证书验证
+ * 用于公网环境下的安全通信
+ */
+val secureOkHttpClient: OkHttpClient by lazy {
+    val specs = arrayListOf(
+        ConnectionSpec.MODERN_TLS,
+        ConnectionSpec.COMPATIBLE_TLS
+    )
+
+    OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .writeTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(60, TimeUnit.SECONDS)
+        .sslSocketFactory(SSLHelper.defaultSSLSocketFactory, SSLHelper.defaultTrustManager)
+        .retryOnConnectionFailure(true)
+        // 使用默认的 hostnameVerifier，进行严格的主机名验证
+        .connectionSpecs(specs)
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .addInterceptor(OkHttpExceptionInterceptor)
+        .addInterceptor { chain ->
+            val request = chain.request()
+            val builder = request.newBuilder()
+            if (request.header(AppConst.UA_NAME) == null) {
+                builder.addHeader(AppConst.UA_NAME, AppConfig.userAgent)
+            } else if (request.header(AppConst.UA_NAME) == "null") {
+                builder.removeHeader(AppConst.UA_NAME)
+            }
+            builder.addHeader("Keep-Alive", "300")
+            builder.addHeader("Connection", "Keep-Alive")
+            builder.addHeader("Cache-Control", "no-cache")
+            chain.proceed(builder.build())
+        }
+        .addInterceptor(DecompressInterceptor)
+        .build()
+}
+
 val okHttpClientManga by lazy {
     okHttpClient.newBuilder().run {
         val interceptors = interceptors()

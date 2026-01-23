@@ -75,6 +75,13 @@
             android:title="@string/reader_server_auto_sync"
             app:iconSpaceReserved="false" />
 
+        <io.legado.app.lib.prefs.SwitchPreference
+            android:defaultValue="false"
+            android:key="readerServerStrictSsl"
+            android:summary="@string/reader_server_strict_ssl_s"
+            android:title="@string/reader_server_strict_ssl"
+            app:iconSpaceReserved="false" />
+
         <io.legado.app.lib.prefs.Preference
             android:key="reader_server_sync_now"
             android:summary="@string/reader_server_sync_now_s"
