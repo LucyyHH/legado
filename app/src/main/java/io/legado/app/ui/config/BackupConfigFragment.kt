@@ -41,6 +41,8 @@ import io.legado.app.utils.applyTint
 import io.legado.app.utils.checkWrite
 import io.legado.app.utils.getPrefString
 import io.legado.app.utils.isContentScheme
+import io.legado.app.utils.SecurePreferences
+import io.legado.app.utils.removePref
 import io.legado.app.utils.launch
 import io.legado.app.utils.setEdgeEffectColor
 import io.legado.app.utils.showDialogFragment
@@ -120,7 +122,8 @@ class BackupConfigFragment : PreferenceFragment(),
         }
         upPreferenceSummary(PreferKey.readerServerUrl, getPrefString(PreferKey.readerServerUrl))
         upPreferenceSummary(PreferKey.readerServerUsername, getPrefString(PreferKey.readerServerUsername))
-        upPreferenceSummary(PreferKey.readerServerPassword, getPrefString(PreferKey.readerServerPassword))
+        // 从加密存储读取密码摘要
+        upPreferenceSummary(PreferKey.readerServerPassword, SecurePreferences.getString(PreferKey.readerServerPassword))
         
         // WebDAV 配置
         findPreference<EditTextPreference>(PreferKey.webDavPassword)?.let {
@@ -203,9 +206,23 @@ class BackupConfigFragment : PreferenceFragment(),
             
             // Reader Server 配置变更
             PreferKey.readerServerUrl,
-            PreferKey.readerServerUsername,
-            PreferKey.readerServerPassword -> listView.post {
+            PreferKey.readerServerUsername -> listView.post {
                 upPreferenceSummary(key, appCtx.getPrefString(key))
+                viewModel.upReaderServerConfig()
+            }
+            
+            // Reader Server 密码变更 - 需要存储到加密存储
+            PreferKey.readerServerPassword -> listView.post {
+                // 从普通 SharedPreferences 获取密码
+                val password = appCtx.getPrefString(key)
+                if (!password.isNullOrEmpty()) {
+                    // 存储到加密存储
+                    SecurePreferences.putString(key, password)
+                    // 从普通存储中删除
+                    appCtx.removePref(key)
+                }
+                // 更新摘要显示（从加密存储读取）
+                upPreferenceSummary(key, SecurePreferences.getString(key))
                 viewModel.upReaderServerConfig()
             }
         }

@@ -189,6 +189,7 @@ dependencies {
     implementation(libs.androidx.viewpager2)
     implementation(libs.androidx.webkit)
     implementation(libs.androidx.documentfile)
+    implementation(libs.security.crypto)
 
     //google
     implementation(libs.material)

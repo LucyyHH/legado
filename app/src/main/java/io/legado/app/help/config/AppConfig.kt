@@ -17,6 +17,7 @@ import io.legado.app.utils.putPrefInt
 import io.legado.app.utils.putPrefLong
 import io.legado.app.utils.putPrefString
 import io.legado.app.utils.removePref
+import io.legado.app.utils.SecurePreferences
 import io.legado.app.utils.sysConfiguration
 import io.legado.app.utils.toastOnUi
 import splitties.init.appCtx
@@ -752,9 +753,9 @@ object AppConfig : SharedPreferences.OnSharedPreferenceChangeListener {
         }
 
     var readerServerPassword: String?
-        get() = appCtx.getPrefString(PreferKey.readerServerPassword)
+        get() = SecurePreferences.getString(PreferKey.readerServerPassword)
         set(value) {
-            appCtx.putPrefString(PreferKey.readerServerPassword, value)
+            SecurePreferences.putString(PreferKey.readerServerPassword, value)
         }
 
     var readerServerSyncBookSource: Boolean
