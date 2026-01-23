@@ -93,9 +93,6 @@ class TextPageFactory(dataSource: DataSource) : PageFactory<TextPage>(dataSource
 
     override val nextPage: TextPage
         get() = with(dataSource) {
-            ReadBook.msg?.let {
-                return@with TextPage(text = it).format()
-            }
             currentChapter?.let {
                 val pageIndex = pageIndex
                 if (pageIndex < it.pageSize - 1) {
@@ -115,9 +112,6 @@ class TextPageFactory(dataSource: DataSource) : PageFactory<TextPage>(dataSource
 
     override val prevPage: TextPage
         get() = with(dataSource) {
-            ReadBook.msg?.let {
-                return@with TextPage(text = it).format()
-            }
             currentChapter?.let {
                 val pageIndex = pageIndex
                 if (pageIndex > 0) {

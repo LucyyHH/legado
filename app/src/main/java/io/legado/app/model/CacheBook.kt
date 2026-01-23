@@ -323,16 +323,24 @@ object CacheBook {
             chapter: BookChapter
         ) {
             Coroutine.async(scope, context, executeContext = context) {
+                // 确保服务器 API 已初始化
+                ReaderServerSync.initConfig()
                 ReaderServerSync.getBookContent(book.bookUrl, chapter.index).getOrThrow()
             }.onSuccess { content ->
                 if (content.isNotBlank()) {
-                    BookHelp.saveText(book, chapter, content)
-                    postEvent(EventBus.SAVE_CONTENT, Pair(book, chapter))
-                    onSuccess(chapter)
+                    try {
+                        BookHelp.saveText(book, chapter, content)
+                        postEvent(EventBus.SAVE_CONTENT, Pair(book, chapter))
+                        onSuccess(chapter)
+                    } catch (e: Exception) {
+                        AppLog.put("保存章节内容失败: ${book.name} - ${chapter.title}", e)
+                        onError(chapter, e)
+                    }
                 } else {
                     onError(chapter, NoStackTraceException("章节内容为空"))
                 }
             }.onError {
+                AppLog.put("下载服务器章节失败: ${book.name} - ${chapter.title}", it)
                 onPreError(chapter, it)
                 //出现错误等待一秒后重新加入待下载列表
                 delay(1000)
@@ -443,6 +451,7 @@ object CacheBook {
             try {
                 val content = if (bookSource == null) {
                     // 服务器书籍：通过 API 获取内容
+                    ReaderServerSync.initConfig()
                     val serverContent = ReaderServerSync.getBookContent(book.bookUrl, chapter.index).getOrThrow()
                     if (serverContent.isNotBlank()) {
                         BookHelp.saveText(book, chapter, serverContent)
@@ -485,20 +494,29 @@ object CacheBook {
             // 服务器书籍：通过 API 获取内容
             if (bookSource == null) {
                 Coroutine.async(scope, IO) {
+                    // 确保服务器 API 已初始化
+                    ReaderServerSync.initConfig()
                     ReaderServerSync.getBookContent(book.bookUrl, chapter.index).getOrThrow()
                 }.onSuccess { content ->
                     if (content.isNotBlank()) {
-                        BookHelp.saveText(book, chapter, content)
-                        postEvent(EventBus.SAVE_CONTENT, Pair(book, chapter))
-                        onSuccess(chapter)
-                        ReadBook.downloadedChapters.add(chapter.index)
-                        ReadBook.downloadFailChapters.remove(chapter.index)
-                        downloadFinish(chapter, content, resetPageOffset)
+                        try {
+                            BookHelp.saveText(book, chapter, content)
+                            postEvent(EventBus.SAVE_CONTENT, Pair(book, chapter))
+                            onSuccess(chapter)
+                            ReadBook.downloadedChapters.add(chapter.index)
+                            ReadBook.downloadFailChapters.remove(chapter.index)
+                            downloadFinish(chapter, content, resetPageOffset)
+                        } catch (e: Exception) {
+                            AppLog.put("保存章节内容失败: ${book.name} - ${chapter.title}", e)
+                            onError(chapter, e)
+                            downloadFinish(chapter, "保存失败\n${e.localizedMessage}", resetPageOffset)
+                        }
                     } else {
                         onError(chapter, NoStackTraceException("章节内容为空"))
                         downloadFinish(chapter, "章节内容为空", resetPageOffset)
                     }
                 }.onError {
+                    AppLog.put("下载服务器章节失败: ${book.name} - ${chapter.title}", it)
                     onError(chapter, it)
                     ReadBook.downloadFailChapters[chapter.index] =
                         (ReadBook.downloadFailChapters[chapter.index] ?: 0) + 1

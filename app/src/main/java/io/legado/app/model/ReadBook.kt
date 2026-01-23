@@ -225,6 +225,9 @@ object ReadBook : CoroutineScope by MainScope() {
         prevTextChapter = null
         curTextChapter = null
         nextTextChapter = null
+        synchronized(this) {
+            loadingChapters.clear()
+        }
     }
 
     fun clearSearchResult() {
@@ -352,9 +355,12 @@ object ReadBook : CoroutineScope by MainScope() {
                 AppLog.putDebug("moveToNextChapter-章节未加载,开始加载")
                 if (upContentInPlace) callBack?.upContent()
                 loadContent(durChapterIndex, upContent, resetPageOffset = false)
-            } else if (upContent && upContentInPlace) {
-                AppLog.putDebug("moveToNextChapter-章节已加载,刷新视图")
-                callBack?.upContent()
+            } else {
+                msg = null  // 切换到已加载章节，清理错误消息
+                if (upContent && upContentInPlace) {
+                    AppLog.putDebug("moveToNextChapter-章节已加载,刷新视图")
+                    callBack?.upContent()
+                }
             }
             loadContent(durChapterIndex.plus(1), upContent, false)
             saveRead()
@@ -383,9 +389,12 @@ object ReadBook : CoroutineScope by MainScope() {
                 AppLog.putDebug("moveToNextChapter-章节未加载,开始加载")
                 if (upContentInPlace) callBack?.upContentAwait()
                 loadContentAwait(durChapterIndex, upContent, resetPageOffset = false)
-            } else if (upContent && upContentInPlace) {
-                AppLog.putDebug("moveToNextChapter-章节已加载,刷新视图")
-                callBack?.upContentAwait()
+            } else {
+                msg = null  // 切换到已加载章节，清理错误消息
+                if (upContent && upContentInPlace) {
+                    AppLog.putDebug("moveToNextChapter-章节已加载,刷新视图")
+                    callBack?.upContentAwait()
+                }
             }
             loadContent(durChapterIndex.plus(1), upContent, false)
             saveRead()
@@ -414,8 +423,11 @@ object ReadBook : CoroutineScope by MainScope() {
             if (curTextChapter == null) {
                 if (upContentInPlace) callBack?.upContent()
                 loadContent(durChapterIndex, upContent, resetPageOffset = false)
-            } else if (upContent && upContentInPlace) {
-                callBack?.upContent()
+            } else {
+                msg = null  // 切换到已加载章节，清理错误消息
+                if (upContent && upContentInPlace) {
+                    callBack?.upContent()
+                }
             }
             loadContent(durChapterIndex.minus(1), upContent, false)
             saveRead()
@@ -606,7 +618,10 @@ object ReadBook : CoroutineScope by MainScope() {
                     } else if (ReaderServerSync.isServerLocalBook(book)) {
                         // 服务器本地书籍只能从服务器获取内容
                         removeLoading(index)
-                        upMsg("获取章节内容失败")
+                        // 只有当前章节加载失败才显示错误消息，前后章节失败不影响当前显示
+                        if (index == durChapterIndex) {
+                            upMsg("获取章节内容失败")
+                        }
                     } else {
                         // 从书源下载
                         download(
@@ -619,6 +634,7 @@ object ReadBook : CoroutineScope by MainScope() {
             }
         }.onError {
             AppLog.put("加载正文出错\n${it.localizedMessage}")
+            removeLoading(index)
         }
     }
 
@@ -781,6 +797,7 @@ object ReadBook : CoroutineScope by MainScope() {
                     withContext(Main) {
                         ensureActive()
                         curTextChapter = textChapter
+                        msg = null  // 当前章节加载成功，清理错误消息
                     }
                     callBack?.upMenuView()
                     var available = false

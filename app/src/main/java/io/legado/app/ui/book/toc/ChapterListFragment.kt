@@ -103,13 +103,10 @@ class ChapterListFragment : VMBaseFragment<TocViewModel>(R.layout.fragment_chapt
             viewModel.bookData.value?.bookUrl?.let { bookUrl ->
                 if (book.bookUrl == bookUrl) {
                     adapter.cacheFileNames.add(chapter.getFileName())
-                    if (viewModel.searchKey.isNullOrEmpty()) {
-                        adapter.notifyItemChanged(chapter.index, true)
-                    } else {
-                        adapter.getItems().forEachIndexed { index, bookChapter ->
-                            if (bookChapter.index == chapter.index) {
-                                adapter.notifyItemChanged(index, true)
-                            }
+                    // 统一使用遍历查找正确的 adapter 位置，避免 chapter.index 与 adapter 位置不一致
+                    adapter.getItems().forEachIndexed { index, bookChapter ->
+                        if (bookChapter.index == chapter.index) {
+                            adapter.notifyItemChanged(index, true)
                         }
                     }
                 }
