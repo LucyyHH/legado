@@ -2,14 +2,19 @@ package io.legado.app.ui.config
 
 import android.annotation.SuppressLint
 import android.content.ComponentName
+import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.View
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
 import androidx.core.view.postDelayed
 import androidx.fragment.app.activityViewModels
 import androidx.preference.ListPreference
 import androidx.preference.Preference
+import androidx.preference.SwitchPreferenceCompat
 import com.jeremyliao.liveeventbus.LiveEventBus
 import io.legado.app.R
 import io.legado.app.constant.EventBus
@@ -26,6 +31,8 @@ import io.legado.app.model.CheckSource
 import io.legado.app.model.ImageProvider
 import io.legado.app.receiver.SharedReceiverActivity
 import io.legado.app.service.WebService
+import io.legado.app.ui.applock.AppLockActivity
+import io.legado.app.ui.applock.AppLockHelper
 import io.legado.app.ui.file.HandleFileContract
 import io.legado.app.ui.widget.number.NumberPickerDialog
 import io.legado.app.utils.LogUtils
@@ -37,6 +44,7 @@ import io.legado.app.utils.removePref
 import io.legado.app.utils.restart
 import io.legado.app.utils.setEdgeEffectColor
 import io.legado.app.utils.showDialogFragment
+import io.legado.app.utils.toastOnUi
 import splitties.init.appCtx
 
 /**
@@ -56,6 +64,18 @@ class OtherConfigFragment : PreferenceFragment(),
             AppConfig.defaultBookTreeUri = treeUri.toString()
         }
     }
+    
+    private val setPinLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == AppLockActivity.RESULT_PIN_SET) {
+            // PIN 设置成功
+            updateAppLockPreferences()
+        } else {
+            // PIN 设置取消，重置开关
+            findPreference<SwitchPreferenceCompat>("appLockEnabled")?.isChecked = false
+        }
+    }
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         putPrefBoolean(PreferKey.processText, isProcessTextEnabled())
@@ -71,6 +91,92 @@ class OtherConfigFragment : PreferenceFragment(),
         upPreferenceSummary(PreferKey.bitmapCacheSize, AppConfig.bitmapCacheSize.toString())
         upPreferenceSummary(PreferKey.imageRetainNum, AppConfig.imageRetainNum.toString())
         upPreferenceSummary(PreferKey.sourceEditMaxLine, AppConfig.sourceEditMaxLine.toString())
+        // 初始化应用锁相关配置
+        initAppLockPreferences()
+    }
+    
+    private fun initAppLockPreferences() {
+        // 设置应用锁开关的初始状态
+        findPreference<SwitchPreferenceCompat>("appLockEnabled")?.apply {
+            isChecked = LocalConfig.appLockEnabled
+            setOnPreferenceChangeListener { _, newValue ->
+                val enabled = newValue as Boolean
+                if (enabled) {
+                    // 启用应用锁，需要先设置 PIN
+                    if (LocalConfig.appLockPin.isNullOrEmpty()) {
+                        val intent = AppLockActivity.createSetPinIntent(requireContext())
+                        setPinLauncher.launch(intent)
+                        false // 返回 false 防止立即更新
+                    } else {
+                        LocalConfig.appLockEnabled = true
+                        true
+                    }
+                } else {
+                    // 关闭应用锁
+                    LocalConfig.appLockEnabled = false
+                    true
+                }
+            }
+        }
+        
+        // 设置指纹解锁的初始状态和可用性
+        findPreference<SwitchPreferenceCompat>("useBiometric")?.apply {
+            isChecked = LocalConfig.useBiometric
+            isEnabled = AppLockHelper.isBiometricAvailable(requireContext())
+            if (!AppLockHelper.isBiometricAvailable(requireContext())) {
+                summary = getString(R.string.biometric_not_available)
+            }
+            setOnPreferenceChangeListener { _, newValue ->
+                val enabled = newValue as Boolean
+                if (enabled) {
+                    // 启用前需要先验证指纹
+                    showBiometricPromptForEnable()
+                    false // 返回 false，等验证成功后再手动更新
+                } else {
+                    LocalConfig.useBiometric = false
+                    true
+                }
+            }
+        }
+    }
+    
+    private fun showBiometricPromptForEnable() {
+        val executor = ContextCompat.getMainExecutor(requireContext())
+        
+        val biometricPrompt = BiometricPrompt(this, executor,
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    // 验证成功，启用指纹解锁
+                    LocalConfig.useBiometric = true
+                    findPreference<SwitchPreferenceCompat>("useBiometric")?.isChecked = true
+                    context?.toastOnUi(R.string.biometric_enabled)
+                }
+                
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    // 验证失败或取消
+                    if (errorCode != BiometricPrompt.ERROR_USER_CANCELED &&
+                        errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
+                        context?.toastOnUi(errString.toString())
+                    }
+                }
+            })
+        
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle(getString(R.string.biometric_login_title))
+            .setSubtitle(getString(R.string.verify_to_enable_biometric))
+            .setNegativeButtonText(getString(R.string.cancel))
+            .setConfirmationRequired(false)  // 面容识别成功后直接确认，无需点击
+            .build()
+        
+        biometricPrompt.authenticate(promptInfo)
+    }
+    
+    private fun updateAppLockPreferences() {
+        findPreference<SwitchPreferenceCompat>("appLockEnabled")?.isChecked = LocalConfig.appLockEnabled
+        findPreference<SwitchPreferenceCompat>("useBiometric")?.apply {
+            isChecked = LocalConfig.useBiometric
+            isEnabled = LocalConfig.appLockEnabled && AppLockHelper.isBiometricAvailable(requireContext())
+        }
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -157,8 +263,15 @@ class OtherConfigFragment : PreferenceFragment(),
             PreferKey.clearWebViewData -> clearWebViewData()
             "localPassword" -> alertLocalPassword()
             PreferKey.shrinkDatabase -> shrinkDatabase()
+            "changePin" -> changeAppLockPin()
         }
         return super.onPreferenceTreeClick(preference)
+    }
+    
+    private fun changeAppLockPin() {
+        // 修改 PIN 码（需要先验证原 PIN）
+        val intent = AppLockActivity.createChangePinIntent(requireContext())
+        setPinLauncher.launch(intent)
     }
 
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {

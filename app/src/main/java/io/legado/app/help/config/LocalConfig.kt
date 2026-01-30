@@ -3,6 +3,7 @@ package io.legado.app.help.config
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import io.legado.app.utils.SecurePreferences
 import io.legado.app.utils.getBoolean
 import io.legado.app.utils.putBoolean
 import io.legado.app.utils.putLong
@@ -122,5 +123,51 @@ by appCtx.getSharedPreferences("local", Context.MODE_PRIVATE) {
         set(value) {
             putBoolean("appCrash", value)
         }
+
+    // ==================== 应用锁相关配置 ====================
+    
+    private const val APP_LOCK_ENABLED_KEY = "appLockEnabled"
+    private const val APP_LOCK_PIN_KEY = "appLockPin"
+    private const val USE_BIOMETRIC_KEY = "useBiometric"
+    
+    /**
+     * 是否启用应用锁
+     */
+    var appLockEnabled: Boolean
+        get() = SecurePreferences.getBoolean(APP_LOCK_ENABLED_KEY, false)
+        set(value) {
+            SecurePreferences.putBoolean(APP_LOCK_ENABLED_KEY, value)
+        }
+    
+    /**
+     * 应用锁PIN码（加密存储）
+     */
+    var appLockPin: String?
+        get() = SecurePreferences.getString(APP_LOCK_PIN_KEY)
+        set(value) {
+            if (value != null) {
+                SecurePreferences.putString(APP_LOCK_PIN_KEY, value)
+            } else {
+                SecurePreferences.remove(APP_LOCK_PIN_KEY)
+            }
+        }
+    
+    /**
+     * 是否启用生物识别解锁（指纹/面容）
+     */
+    var useBiometric: Boolean
+        get() = SecurePreferences.getBoolean(USE_BIOMETRIC_KEY, false)
+        set(value) {
+            SecurePreferences.putBoolean(USE_BIOMETRIC_KEY, value)
+        }
+    
+    /**
+     * 清除应用锁设置
+     */
+    fun clearAppLock() {
+        appLockEnabled = false
+        appLockPin = null
+        useBiometric = false
+    }
 
 }

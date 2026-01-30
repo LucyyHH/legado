@@ -3,6 +3,7 @@ package io.legado.app.ui.welcome
 import android.content.Intent
 import android.graphics.drawable.BitmapDrawable
 import android.os.Bundle
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.postDelayed
 import io.legado.app.base.BaseActivity
 import io.legado.app.constant.PreferKey
@@ -13,6 +14,8 @@ import io.legado.app.help.config.AppConfig
 import io.legado.app.help.config.ThemeConfig
 import io.legado.app.lib.theme.accentColor
 import io.legado.app.lib.theme.backgroundColor
+import io.legado.app.ui.applock.AppLockActivity
+import io.legado.app.ui.applock.AppLockHelper
 import io.legado.app.ui.book.read.ReadBookActivity
 import io.legado.app.ui.main.MainActivity
 import io.legado.app.utils.BitmapUtils
@@ -28,6 +31,18 @@ import io.legado.app.utils.windowSize
 open class WelcomeActivity : BaseActivity<ActivityWelcomeBinding>() {
 
     override val binding by viewBinding(ActivityWelcomeBinding::inflate)
+    
+    private val appLockLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == AppLockActivity.RESULT_UNLOCKED) {
+            // 解锁成功，继续进入主界面
+            proceedToMain()
+        } else {
+            // 解锁失败或取消，关闭应用
+            finish()
+        }
+    }
 
     override fun onActivityCreated(savedInstanceState: Bundle?) {
         binding.ivBook.setColorFilter(accentColor)
@@ -78,6 +93,18 @@ open class WelcomeActivity : BaseActivity<ActivityWelcomeBinding>() {
     }
 
     private fun startMainActivity() {
+        // 检查应用锁是否启用
+        if (AppLockHelper.isAppLockEnabled()) {
+            // 启动应用锁验证界面
+            val intent = Intent(this, AppLockActivity::class.java)
+            appLockLauncher.launch(intent)
+        } else {
+            // 直接进入主界面
+            proceedToMain()
+        }
+    }
+    
+    private fun proceedToMain() {
         startActivity<MainActivity>()
         if (getPrefBoolean(PreferKey.defaultToRead) && appDb.bookDao.lastReadBook != null) {
             startActivity<ReadBookActivity>()

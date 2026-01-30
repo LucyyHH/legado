@@ -1232,4 +1232,28 @@
     <string name="auto_check_new_backup_t">自动检查新备份</string>
     <string name="auto_check_new_backup_s">打开软件时检查是否有新备份，有新备份时提示是否更新</string>
     <string name="sys_image_picker">系统图片选择器</string>
+    
+    <!-- 应用锁 -->
+    <string name="app_lock">应用锁</string>
+    <string name="app_lock_summary">每次打开应用时需要验证</string>
+    <string name="use_biometric">使用生物识别</string>
+    <string name="use_biometric_summary">使用指纹或面容识别解锁</string>
+    <string name="biometric_not_available">生物识别不可用</string>
+    <string name="change_pin">修改PIN码</string>
+    <string name="change_pin_summary">修改应用锁PIN码</string>
+    <string name="enter_pin">请输入PIN码</string>
+    <string name="set_pin">设置PIN码</string>
+    <string name="set_new_pin">设置新PIN码</string>
+    <string name="verify_old_pin">验证当前PIN码</string>
+    <string name="confirm_pin">确认PIN码</string>
+    <string name="pin_not_match">PIN码不一致</string>
+    <string name="wrong_pin">PIN码错误</string>
+    <string name="wrong_pin_attempts">PIN码错误，还剩%d次机会</string>
+    <string name="too_many_attempts">错误次数过多，请稍后再试</string>
+    <string name="pin_set_success">PIN码设置成功</string>
+    <string name="biometric_login_title">验证身份</string>
+    <string name="biometric_login_subtitle">使用指纹或面容解锁</string>
+    <string name="use_pin">使用PIN码</string>
+    <string name="verify_to_enable_biometric">验证指纹以启用此功能</string>
+    <string name="biometric_enabled">指纹解锁已启用</string>
 </resources>

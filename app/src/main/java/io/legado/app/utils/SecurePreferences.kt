@@ -77,6 +77,20 @@ object SecurePreferences {
     }
     
     /**
+     * 存储布尔值
+     */
+    fun putBoolean(key: String, value: Boolean) {
+        securePrefs.edit().putBoolean(key, value).apply()
+    }
+    
+    /**
+     * 获取布尔值
+     */
+    fun getBoolean(key: String, defValue: Boolean = false): Boolean {
+        return securePrefs.getBoolean(key, defValue)
+    }
+    
+    /**
      * 删除指定键
      */
     fun remove(key: String) {

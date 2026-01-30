@@ -120,6 +120,12 @@
             android:configChanges="locale|keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|uiMode"
             android:exported="true"
             android:launchMode="singleTask" />
+        <!-- 应用锁界面 -->
+        <activity
+            android:name=".ui.applock.AppLockActivity"
+            android:configChanges="locale|keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|uiMode"
+            android:exported="false"
+            android:theme="@style/AppTheme.Light" />
         <!-- 阅读界面 -->
         <activity
             android:name=".ui.book.read.ReadBookActivity"

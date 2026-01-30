@@ -64,6 +64,25 @@
             android:summary="@string/set_local_password_summary"
             android:title="@string/set_local_password" />
 
+        <io.legado.app.lib.prefs.SwitchPreference
+            android:key="appLockEnabled"
+            android:summary="@string/app_lock_summary"
+            android:title="@string/app_lock"
+            app:iconSpaceReserved="false" />
+
+        <io.legado.app.lib.prefs.SwitchPreference
+            android:key="useBiometric"
+            android:dependency="appLockEnabled"
+            android:summary="@string/use_biometric_summary"
+            android:title="@string/use_biometric"
+            app:iconSpaceReserved="false" />
+
+        <io.legado.app.lib.prefs.Preference
+            android:key="changePin"
+            android:dependency="appLockEnabled"
+            android:summary="@string/change_pin_summary"
+            android:title="@string/change_pin" />
+
         <io.legado.app.lib.prefs.Preference
             android:key="userAgent"
             android:title="@string/user_agent" />
