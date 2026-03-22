@@ -5,7 +5,7 @@ import io.legado.app.constant.AppLog
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.BookGroup
-import io.legado.app.data.entities.BookProgress
+
 import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.RssSource
 import io.legado.app.data.entities.Server
@@ -367,9 +367,14 @@ class ReaderServerApi(
         // 检查返回值是否为 URL 或相对路径（服务器对 EPUB 等格式可能返回章节内容链接）
         // 支持完整 URL (http://, https://) 和相对路径 (/book-assets/)
         if (content.startsWith("http://") || content.startsWith("https://") || content.startsWith("/book-assets/")) {
+            // 保存章节路径，用于后续解析图片相对路径
+            val chapterPath = if (content.startsWith("/")) {
+                content
+            } else {
+                try { java.net.URL(content).path } catch (_: Exception) { content }
+            }
             // 构建完整 URL
             val contentUrl = if (content.startsWith("/")) {
-                // 相对路径，需要拼接服务器地址
                 "$baseUrl$content"
             } else {
                 content
@@ -384,18 +389,32 @@ class ReaderServerApi(
             }
             content = requestGet(finalUrl)
             
-            // 如果是 XHTML/HTML 内容，使用 Jsoup 解析提取纯文本
+            // 如果是 XHTML/HTML 内容，解析并保留 <img> 标签
             if (content.contains("<html") || content.contains("<body") || content.contains("<?xml")) {
                 try {
-                    // 使用 Jsoup 解析 HTML，提取 body 内容
                     val doc = Jsoup.parse(content)
                     val body = doc.body()
-                    // 获取纯文本，保留换行
-                    content = body.wholeText()
-                        .replace(Regex("\\n{3,}"), "\n\n") // 压缩多个空行
-                        .trim()
+                    body.select("title").remove()
+                    // SVG <image xlink:href="..."> → <img src="...">
+                    body.select("image").forEach {
+                        it.tagName("img")
+                        if (it.hasAttr("xlink:href")) {
+                            it.attr("src", it.attr("xlink:href"))
+                        }
+                    }
+                    // 将图片相对路径解析为服务器绝对路径
+                    body.select("img").forEach { img ->
+                        val src = img.attr("src").trim()
+                        if (src.isNotEmpty() && !src.startsWith("/") && !src.startsWith("http")) {
+                            img.attr("src", resolveRelativePath(chapterPath, src))
+                        }
+                    }
+                    val rawHtml = body.html().replace("</img>", "")
+                    content = io.legado.app.utils.HtmlFormatter.formatKeepImg(rawHtml)
                 } catch (e: Exception) {
-                    content = io.legado.app.utils.HtmlFormatter.format(content)
+                    content = io.legado.app.utils.HtmlFormatter.formatKeepImg(
+                        content.replace("</img>", "")
+                    )
                 }
             }
         }
@@ -404,11 +423,31 @@ class ReaderServerApi(
     }
 
     /**
-     * 保存阅读进度
+     * 将相对路径解析为基于 basePath 的绝对路径
+     * 例如 basePath="/book-assets/.../OEBPS/Text/ch1.xhtml", relative="../Images/pic.jpg"
+     * 结果为 "/book-assets/.../OEBPS/Images/pic.jpg"
      */
-    suspend fun saveBookProgress(progress: BookProgress): Boolean {
+    private fun resolveRelativePath(basePath: String, relativePath: String): String {
+        val baseDir = basePath.substringBeforeLast('/')
+        val parts = "$baseDir/$relativePath".split("/")
+        val resolved = mutableListOf<String>()
+        for (part in parts) {
+            when {
+                part == ".." && resolved.isNotEmpty() && resolved.last().isNotEmpty() -> resolved.removeLast()
+                part == "." -> { }
+                else -> resolved.add(part)
+            }
+        }
+        return resolved.joinToString("/")
+    }
+
+    /**
+     * 保存阅读进度
+     * 服务器端期望的字段: url (bookUrl) + index (chapterIndex)
+     */
+    suspend fun saveBookProgress(bookUrl: String, chapterIndex: Int): Boolean {
         val url = buildAuthUrl(API_SAVE_BOOK_PROGRESS)
-        val body = GSON.toJson(progress)
+        val body = GSON.toJson(mapOf("url" to bookUrl, "index" to chapterIndex))
         val response = requestPost(url, body)
         
         val result = GSON.fromJsonObject<ApiResponse<Any>>(response)
@@ -511,17 +550,16 @@ class ReaderServerApi(
         
         val accessToken = getValidAccessToken()
         val encodedToken = java.net.URLEncoder.encode(accessToken, "UTF-8").replace("+", "%20")
-        // 对路径进行 URL 编码，但保留 / 字符
         val encodedPath = imagePath.split("/").joinToString("/") { segment ->
             if (segment.isNotEmpty()) {
-                java.net.URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
+                val decoded = java.net.URLDecoder.decode(segment, "UTF-8")
+                java.net.URLEncoder.encode(decoded, "UTF-8").replace("+", "%20")
             } else {
                 segment
             }
         }
         
         val url = "$baseUrl$encodedPath?accessToken=$encodedToken"
-        
         val responseBody = httpClient.newCallResponseBody {
             url(url)
         }

@@ -240,16 +240,24 @@ object ReadBook : CoroutineScope by MainScope() {
 
     fun uploadProgress(toast: Boolean = false, successAction: (() -> Unit)? = null) {
         book?.let {
+            val snapshot = BookProgress(
+                name = it.name,
+                author = it.author,
+                durChapterIndex = durChapterIndex,
+                durChapterPos = durChapterPos,
+                durChapterTime = System.currentTimeMillis(),
+                durChapterTitle = curTextChapter?.title ?: it.durChapterTitle
+            )
             launch(IO) {
                 // 上传到 WebDAV
-                AppWebDav.uploadBookProgress(it, toast) {
+                AppWebDav.uploadBookProgress(snapshot) {
                     successAction?.invoke()
                 }
                 // 上传到 Reader Server
                 if (AppConfig.readerServerSyncProgress && AppConfig.readerServerConfigured) {
                     kotlin.runCatching {
                         ReaderServerSync.initConfig()
-                        ReaderServerSync.uploadBookProgress(it)
+                        ReaderServerSync.uploadBookProgress(it.bookUrl, durChapterIndex)
                     }.onFailure { e ->
                         AppLog.put("上传阅读进度到Reader Server失败: ${e.localizedMessage}", e)
                     }

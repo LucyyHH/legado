@@ -126,6 +126,12 @@ class MainActivity : VMBaseActivity<ActivityMainBinding, MainViewModel>(),
             notifyAppCrash()
             //备份同步
             backupSync()
+            //Reader Server 同步
+            if (AppConfig.readerServerAutoSync && AppConfig.readerServerConfigured) {
+                binding.viewPagerMain.postDelayed(500) {
+                    viewModel.syncWithReaderServer()
+                }
+            }
             //自动更新书籍
             val isAutoRefreshedBook = savedInstanceState?.getBoolean("isAutoRefreshedBook") ?: false
             if (AppConfig.autoRefreshBook && !isAutoRefreshedBook) {

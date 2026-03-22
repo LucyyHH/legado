@@ -90,10 +90,6 @@ class MainViewModel(application: Application) : BaseViewModel(application) {
 
     fun upAllBookToc() {
         execute {
-            // 如果启用了自动同步，先与Reader Server同步
-            if (AppConfig.readerServerAutoSync && AppConfig.readerServerConfigured) {
-                syncWithReaderServer()
-            }
             addToWaitUp(appDb.bookDao.hasUpdateBooks)
         }
     }
@@ -106,26 +102,7 @@ class MainViewModel(application: Application) : BaseViewModel(application) {
         execute {
             kotlin.runCatching {
                 ReaderServerSync.initConfig()
-                if (ReaderServerSync.isOk) {
-                    // 同步分组（在同步书架之前，确保分组信息已就位）
-                    if (AppConfig.readerServerSyncBookGroup) {
-                        ReaderServerSync.syncBookGroups().onFailure {
-                            AppLog.put("Reader Server 分组同步失败: ${it.localizedMessage}", it)
-                        }
-                    }
-                    // 同步书架
-                    if (AppConfig.readerServerSyncBookshelf) {
-                        ReaderServerSync.syncBookshelf().onFailure {
-                            AppLog.put("Reader Server 书架同步失败: ${it.localizedMessage}", it)
-                        }
-                    }
-                    // 同步书源
-                    if (AppConfig.readerServerSyncBookSource) {
-                        ReaderServerSync.syncBookSources().onFailure {
-                            AppLog.put("Reader Server 书源同步失败: ${it.localizedMessage}", it)
-                        }
-                    }
-                }
+                ReaderServerSync.syncAll()
             }.onFailure {
                 AppLog.put("Reader Server 同步失败: ${it.localizedMessage}", it)
             }

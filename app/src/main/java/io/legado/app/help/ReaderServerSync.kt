@@ -6,7 +6,6 @@ import io.legado.app.constant.PreferKey
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookGroup
-import io.legado.app.data.entities.BookProgress
 import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.RssSource
 import io.legado.app.data.entities.Server
@@ -425,24 +424,16 @@ object ReaderServerSync {
     
     /**
      * 判断是否应该用服务器进度更新本地
+     * 只以 durChapterTime（最近阅读时间）为准，时间更新的一方代表用户当前的真实阅读位置。
+     * 不能用章节索引/位置判断，因为用户可能回头重读较早的章节。
      */
     private fun shouldUpdateProgress(local: Book, server: Book): Boolean {
-        // 如果服务器的章节索引更大，或者索引相同但位置更大，则更新
-        if (server.durChapterIndex > local.durChapterIndex) {
-            return true
-        }
-        if (server.durChapterIndex == local.durChapterIndex && server.durChapterPos > local.durChapterPos) {
-            return true
-        }
-        // 如果服务器的阅读时间更新，也考虑更新
-        if (server.durChapterTime > local.durChapterTime) {
-            return true
-        }
-        return false
+        return server.durChapterTime > local.durChapterTime
     }
     
     /**
      * 上传阅读进度
+     * 通过 saveBookProgress 接口发送 bookUrl + chapterIndex 给服务器
      */
     suspend fun uploadBookProgress(book: Book): Result<Boolean> {
         return withContext(Dispatchers.IO) {
@@ -455,8 +446,7 @@ object ReaderServerSync {
                     return@runCatching false
                 }
                 
-                val progress = BookProgress(book)
-                val result = serverApi.saveBookProgress(progress)
+                val result = serverApi.saveBookProgress(book.bookUrl, book.durChapterIndex)
                 
                 if (result) {
                     book.syncTime = System.currentTimeMillis()
@@ -473,9 +463,10 @@ object ReaderServerSync {
     }
     
     /**
-     * 上传阅读进度（使用BookProgress对象）
+     * 上传阅读进度
+     * 通过 saveBookProgress 接口发送 bookUrl + chapterIndex 给服务器
      */
-    suspend fun uploadBookProgress(progress: BookProgress): Result<Boolean> {
+    suspend fun uploadBookProgress(bookUrl: String, chapterIndex: Int): Result<Boolean> {
         return withContext(Dispatchers.IO) {
             kotlin.runCatching {
                 if (!NetworkUtils.isAvailable()) {
@@ -486,7 +477,7 @@ object ReaderServerSync {
                     return@runCatching false
                 }
                 
-                val result = serverApi.saveBookProgress(progress)
+                val result = serverApi.saveBookProgress(bookUrl, chapterIndex)
                 
                 // 保存token
                 val (token, expireTime) = serverApi.getTokenInfo()

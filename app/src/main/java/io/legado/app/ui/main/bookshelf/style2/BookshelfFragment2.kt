@@ -83,6 +83,7 @@ class BookshelfFragment2() : BaseBookshelfFragment(R.layout.fragment_bookshelf2)
         binding.refreshLayout.setColorSchemeColors(accentColor)
         binding.refreshLayout.setOnRefreshListener {
             binding.refreshLayout.isRefreshing = false
+            activityViewModel.syncWithReaderServer()
             activityViewModel.upToc(books)
         }
         if (bookshelfLayout == 0) {
