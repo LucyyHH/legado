@@ -375,8 +375,13 @@ object ReaderServerSync {
                         // 比较进度
                         if (shouldUpdateProgress(localBook, serverBook)) {
                             // 服务器进度更新，更新本地
+                            val keepLocalChapterPos = serverBook.durChapterIndex == localBook.durChapterIndex &&
+                                    serverBook.durChapterPos == 0 &&
+                                    localBook.durChapterPos > 0
                             localBook.durChapterIndex = serverBook.durChapterIndex
-                            localBook.durChapterPos = serverBook.durChapterPos
+                            if (!keepLocalChapterPos) {
+                                localBook.durChapterPos = serverBook.durChapterPos
+                            }
                             localBook.durChapterTitle = serverBook.durChapterTitle
                             localBook.durChapterTime = serverBook.durChapterTime
                             localBook.syncTime = System.currentTimeMillis()
