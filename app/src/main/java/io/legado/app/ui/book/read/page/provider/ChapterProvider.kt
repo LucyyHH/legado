@@ -15,6 +15,7 @@ import io.legado.app.constant.EventBus
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
 import io.legado.app.help.book.BookContent
+import io.legado.app.help.book.ImagePageLayout
 import io.legado.app.help.config.AppConfig
 import io.legado.app.help.config.ReadBookConfig
 import io.legado.app.model.ImageProvider
@@ -173,7 +174,10 @@ object ChapterProvider {
         var absStartX = paddingLeft
         var durY = 0f
         textPages.add(TextPage())
-        if (ReadBookConfig.titleMode != 2 || bookChapter.isVolume) {
+        if (ImagePageLayout.showChapterTitle(
+                ImagePageLayout.isPageBased(book, bookChapter, contents.joinToString("\n")),
+                ReadBookConfig.titleMode != 2 || bookChapter.isVolume
+            )) {
             //标题非隐藏
             displayTitle.splitNotBlank("\n").forEach { text ->
                 setTypeText(

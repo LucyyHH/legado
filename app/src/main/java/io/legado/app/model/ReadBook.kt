@@ -10,7 +10,9 @@ import io.legado.app.data.entities.BookProgress
 import io.legado.app.data.entities.BookSource
 import io.legado.app.data.entities.ReadRecord
 import io.legado.app.help.AppWebDav
+import io.legado.app.help.ProgressSyncRouter
 import io.legado.app.help.ReaderServerSync
+import io.legado.app.help.book.ReaderServerPdf
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.ContentProcessor
 import io.legado.app.help.book.isImage
@@ -19,7 +21,6 @@ import io.legado.app.help.book.isPdf
 import io.legado.app.help.book.isSameNameAuthor
 import io.legado.app.help.book.readSimulating
 import io.legado.app.help.book.simulatedTotalChapterNum
-import io.legado.app.help.book.update
 import io.legado.app.help.config.AppConfig
 import io.legado.app.help.config.ReadBookConfig
 import io.legado.app.help.coroutine.Coroutine
@@ -245,27 +246,85 @@ object ReadBook : CoroutineScope by MainScope() {
                 author = it.author,
                 durChapterIndex = durChapterIndex,
                 durChapterPos = durChapterPos,
-                durChapterTime = System.currentTimeMillis(),
+                durChapterTime = it.durChapterTime,
                 durChapterTitle = curTextChapter?.title ?: it.durChapterTitle
             )
+            val readerSnapshot = it.copy(
+                durChapterIndex = snapshot.durChapterIndex,
+                durChapterPos = snapshot.durChapterPos,
+                durChapterTime = snapshot.durChapterTime,
+                durChapterTitle = snapshot.durChapterTitle,
+            )
             launch(IO) {
-                // 上传到 WebDAV
-                AppWebDav.uploadBookProgress(snapshot) {
-                    successAction?.invoke()
-                }
-                // 上传到 Reader Server
-                if (AppConfig.readerServerSyncProgress && AppConfig.readerServerConfigured) {
-                    kotlin.runCatching {
+                val success = ProgressSyncRouter.run(
+                    webDavEnabled = AppConfig.syncBookProgress && AppWebDav.isOk,
+                    readerServerEnabled = AppConfig.readerServerSyncProgress &&
+                            AppConfig.readerServerConfigured &&
+                            readerSnapshot.bookUrl.startsWith("reader-v1://"),
+                    syncWebDav = {
+                        var saved = false
+                        AppWebDav.uploadBookProgress(snapshot) {
+                            saved = true
+                        }
+                        saved
+                    },
+                    syncReaderServer = {
                         ReaderServerSync.initConfig()
-                        ReaderServerSync.uploadBookProgress(it.bookUrl, durChapterIndex)
-                    }.onFailure { e ->
-                        AppLog.put("上传阅读进度到Reader Server失败: ${e.localizedMessage}", e)
-                    }
+                        ReaderServerSync.uploadBookProgress(readerSnapshot).getOrThrow()
+                    },
+                    onFailure = { backend, error ->
+                        AppLog.put("上传阅读进度到 $backend 失败: ${error.localizedMessage}", error)
+                    },
+                )
+                if (success) {
+                    successAction?.invoke()
+                } else if (toast) {
+                    appCtx.toastOnUi("上传阅读进度失败，请检查同步设置和日志")
                 }
-                ensureActive()
-                it.update()
             }
         }
+    }
+
+    /**
+     * Reader Server progress is independent of WebDAV and its enhanced-sync switch.
+     */
+    fun syncReaderProgress(newProgressAction: ((progress: BookProgress) -> Unit)? = null) {
+        if (!AppConfig.readerServerSyncProgress || !AppConfig.readerServerConfigured) return
+        val currentBook = book ?: return
+        if (!currentBook.bookUrl.startsWith("reader-v1://")) return
+        // Comparing must use the last actual read time. Creating a new timestamp here would
+        // incorrectly make the local position win every time merely because a check ran.
+        val snapshot = currentBook.copy(
+            durChapterIndex = durChapterIndex,
+            durChapterPos = durChapterPos,
+            durChapterTime = currentBook.durChapterTime,
+            durChapterTitle = curTextChapter?.title ?: currentBook.durChapterTitle,
+        )
+        launch(IO) {
+            try {
+                ReaderServerSync.initConfig()
+                val serverBook = ReaderServerSync.syncBookProgress(snapshot).getOrThrow()
+                if (serverBook != null && isReaderProgressRequestCurrent(snapshot, serverBook)) {
+                    launch(Main) {
+                        if (isReaderProgressRequestCurrent(snapshot, serverBook)) {
+                            newProgressAction?.invoke(BookProgress(serverBook))
+                        }
+                    }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                AppLog.put("同步阅读进度到 Reader Server 失败: ${error.localizedMessage}", error)
+            }
+        }
+    }
+
+    private fun isReaderProgressRequestCurrent(snapshot: Book, serverBook: Book): Boolean {
+        val currentBook = book ?: return false
+        return currentBook.bookUrl == snapshot.bookUrl &&
+                durChapterIndex == snapshot.durChapterIndex &&
+                durChapterPos == snapshot.durChapterPos &&
+                serverBook.durChapterTime > currentBook.durChapterTime
     }
 
     /**
@@ -277,6 +336,7 @@ object ReadBook : CoroutineScope by MainScope() {
         uploadSuccessAction: (() -> Unit)? = null,
         syncSuccessAction: (() -> Unit)? = null
     ) {
+        syncReaderProgress(newProgressAction)
         if (!AppConfig.syncBookProgress) return
         val book = book ?: return
         Coroutine.async {
@@ -291,7 +351,6 @@ object ReadBook : CoroutineScope by MainScope() {
                 // 服务器没有进度或者进度比服务器快，上传现有进度
                 Coroutine.async {
                     AppWebDav.uploadBookProgress(BookProgress(book), uploadSuccessAction)
-                    book.update()
                 }
             } else if (progress.durChapterIndex > book.durChapterIndex ||
                 progress.durChapterPos > book.durChapterPos
@@ -663,11 +722,11 @@ object ReadBook : CoroutineScope by MainScope() {
                     ?: tryGetContentFromServer(book, chapter)
                 // 服务器本地书籍只能从服务器获取内容
                 if (content == null) {
-                    content = if (ReaderServerSync.isServerLocalBook(book)) {
-                        "获取章节内容失败"
-                    } else {
-                        downloadAwait(chapter)
+                    if (ReaderServerSync.isServerLocalBook(book)) {
+                        if (index == durChapterIndex) upMsg("获取章节内容失败")
+                        return@withContext
                     }
+                    content = downloadAwait(chapter)
                 }
                 contentLoadFinishAwait(book, chapter, content, upContent, resetPageOffset)
                 success?.invoke()
@@ -690,7 +749,12 @@ object ReadBook : CoroutineScope by MainScope() {
         }
         val book = book ?: return
         val chapter = appDb.bookChapterDao.getChapter(book.bookUrl, index) ?: return
-        if (BookHelp.hasContent(book, chapter)) {
+        val hasContent = if (ReaderServerSync.isServerLocalBook(book)) {
+            BookHelp.hasImageContent(book, chapter)
+        } else {
+            BookHelp.hasContent(book, chapter)
+        }
+        if (hasContent) {
             downloadedChapters.add(chapter.index)
         } else {
             delay(1000)
@@ -712,8 +776,11 @@ object ReadBook : CoroutineScope by MainScope() {
     ) {
         val book = book ?: return removeLoading(chapter.index)
         val bookSource = bookSource
-        if (bookSource != null) {
-            CacheBook.getOrCreate(bookSource, book).download(scope, chapter, semaphore)
+        if (ReaderServerSync.isServerLocalBook(book)) {
+            CacheBook.getOrCreate(book)?.download(scope, chapter, semaphore, resetPageOffset)
+                ?: removeLoading(chapter.index)
+        } else if (bookSource != null) {
+            CacheBook.getOrCreate(bookSource, book).download(scope, chapter, semaphore, resetPageOffset)
         } else {
             val msg = if (book.isLocal) "无内容" else "没有书源"
             contentLoadFinish(
@@ -729,7 +796,10 @@ object ReadBook : CoroutineScope by MainScope() {
     private suspend fun downloadAwait(chapter: BookChapter): String {
         val book = book!!
         val bookSource = bookSource
-        if (bookSource != null) {
+        if (ReaderServerSync.isServerLocalBook(book)) {
+            return CacheBook.getOrCreate(book)?.downloadAwait(chapter)
+                ?: throw IllegalStateException("无法初始化服务器书籍缓存")
+        } else if (bookSource != null) {
             return CacheBook.getOrCreate(bookSource, book).downloadAwait(chapter)
         } else {
             val msg = if (book.isLocal) "无内容" else "没有书源"
@@ -742,12 +812,18 @@ object ReadBook : CoroutineScope by MainScope() {
      * 如果服务器配置了且有缓存，返回内容并保存到本地；否则返回 null
      */
     private suspend fun tryGetContentFromServer(book: Book, chapter: BookChapter): String? {
+        if (!ReaderServerSync.isOk) ReaderServerSync.initConfig()
         if (!ReaderServerSync.isOk) return null
         return try {
-            ReaderServerSync.getBookContent(book.bookUrl, chapter.index).getOrNull()?.let { content ->
+            ReaderServerSync.getBookContent(book.bookUrl, chapter.index, chapter.url).getOrNull()?.let { content ->
                 if (content.isNotBlank()) {
                     // 保存到本地缓存
                     BookHelp.saveText(book, chapter, content)
+                    if (ReaderServerSync.isServerLocalBook(book) && !ReaderServerPdf.isPdf(book)) {
+                        launch(downloadScope.coroutineContext) {
+                            BookHelp.saveImages(null, book, chapter, content)
+                        }
+                    }
                     AppLog.put("从服务器获取章节内容成功: ${book.name} - ${chapter.title}")
                     content
                 } else {
@@ -984,27 +1060,64 @@ object ReadBook : CoroutineScope by MainScope() {
             it.charset = charset
             callBack?.loadChapterList(it)
         }
-        saveRead()
+        saveSettings()
     }
 
-    fun saveRead(pageChanged: Boolean = false) {
+    fun saveSettings() {
+        val snapshot = book?.let(::snapshotBookSettings) ?: return
         executor.execute {
             kotlin.runCatching {
-                val book = book ?: return@execute
-                book.lastCheckCount = 0
-                book.durChapterTime = System.currentTimeMillis()
-                val chapterChanged = book.durChapterIndex != durChapterIndex
-                book.durChapterIndex = durChapterIndex
-                book.durChapterPos = durChapterPos
+                appDb.bookDao.saveReadingSettings(
+                    snapshot.bookUrl,
+                    snapshot.charset,
+                    snapshot.readConfigJson,
+                )
+            }.onFailure {
+                AppLog.put("保存书籍阅读设置信息出错\n$it", it)
+            }
+        }
+    }
+
+    fun saveRead(pageChanged: Boolean = false, updateTime: Boolean = true) {
+        val currentBook = book ?: return
+        val savedChapterIndex = durChapterIndex
+        val savedChapterPos = durChapterPos
+        currentBook.lastCheckCount = 0
+        if (updateTime) {
+            currentBook.durChapterTime = System.currentTimeMillis()
+        }
+        val chapterChanged = currentBook.durChapterIndex != savedChapterIndex
+        currentBook.durChapterIndex = savedChapterIndex
+        currentBook.durChapterPos = savedChapterPos
+        val savedSnapshot = currentBook.copy()
+        executor.execute {
+            kotlin.runCatching {
+                var chapterTitle = savedSnapshot.durChapterTitle
                 if (!pageChanged || chapterChanged) {
-                    appDb.bookChapterDao.getChapter(book.bookUrl, durChapterIndex)?.let {
-                        book.durChapterTitle = it.getDisplayTitle(
-                            ContentProcessor.get(book.name, book.origin).getTitleReplaceRules(),
-                            book.getUseReplaceRule()
+                    appDb.bookChapterDao.getChapter(savedSnapshot.bookUrl, savedChapterIndex)?.let {
+                        chapterTitle = it.getDisplayTitle(
+                            ContentProcessor.get(savedSnapshot.name, savedSnapshot.origin)
+                                .getTitleReplaceRules(),
+                            savedSnapshot.getUseReplaceRule()
                         )
                     }
                 }
-                appDb.bookDao.update(book)
+                appDb.bookDao.saveReadingProgress(
+                    savedSnapshot.bookUrl,
+                    savedChapterIndex,
+                    savedChapterPos,
+                    chapterTitle,
+                    savedSnapshot.durChapterTime,
+                )
+                val activeBook = book
+                if (activeBook?.bookUrl == savedSnapshot.bookUrl &&
+                    activeBook.durChapterTime == savedSnapshot.durChapterTime &&
+                    activeBook.durChapterIndex == savedChapterIndex &&
+                    activeBook.durChapterPos == savedChapterPos &&
+                    durChapterIndex == savedChapterIndex && durChapterPos == savedChapterPos
+                ) {
+                    activeBook.durChapterTitle = chapterTitle
+                }
             }.onFailure {
                 AppLog.put("保存书籍阅读进度信息出错\n$it", it)
             }
@@ -1140,4 +1253,19 @@ object ReadBook : CoroutineScope by MainScope() {
         fun cancelSelect()
     }
 
+}
+
+internal data class BookSettingsSnapshot(
+    val bookUrl: String,
+    val charset: String?,
+    val readConfigJson: String?,
+)
+
+internal fun snapshotBookSettings(book: Book): BookSettingsSnapshot {
+    val frozenConfig = book.readConfig?.copy()
+    return BookSettingsSnapshot(
+        bookUrl = book.bookUrl,
+        charset = book.charset,
+        readConfigJson = frozenConfig?.let(Book.Converters()::readConfigToString),
+    )
 }

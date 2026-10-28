@@ -48,7 +48,7 @@ class BooksAdapterList(context: Context, callBack: CallBack) :
         RecyclerView.ViewHolder(binding.root) {
 
         fun onBind(item: Book, position: Int) = binding.run {
-            tvName.text = item.name
+            tvName.text = item.getDisplayName()
             tvAuthor.text = item.author
             tvRead.text = item.durChapterTitle
             tvLast.text = item.latestChapterTitle
@@ -68,7 +68,7 @@ class BooksAdapterList(context: Context, callBack: CallBack) :
                     val bundle = payloads[i] as Bundle
                     bundle.keySet().forEach {
                         when (it) {
-                            "name" -> tvName.text = item.name
+                            "name" -> tvName.text = item.getDisplayName()
                             "author" -> tvAuthor.text = item.author
                             "dur" -> tvRead.text = item.durChapterTitle
                             "last" -> tvLast.text = item.latestChapterTitle

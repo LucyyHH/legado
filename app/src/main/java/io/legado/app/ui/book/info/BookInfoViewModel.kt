@@ -112,7 +112,12 @@ class BookInfoViewModel(application: Application) : BaseViewModel(application) {
             
             // 服务器本地书籍统一通过 API 获取章节
             if (ReaderServerSync.isServerLocalBook(book)) {
-                loadServerChapter(book)
+                val cachedChapters = appDb.bookChapterDao.getChapterList(book.bookUrl)
+                if (cachedChapters.isNotEmpty()) {
+                    chapterListData.postValue(cachedChapters)
+                } else {
+                    loadServerChapter(book)
+                }
                 return@execute
             }
             
@@ -143,7 +148,7 @@ class BookInfoViewModel(application: Application) : BaseViewModel(application) {
                     appDb.bookChapterDao.delByBook(book.bookUrl)
                     appDb.bookChapterDao.insert(*chapters.toTypedArray())
                     book.totalChapterNum = chapters.size
-                    appDb.bookDao.update(book)
+                    appDb.bookDao.updateReaderChapterCount(book.bookUrl, chapters.size)
                     chapterListData.postValue(chapters)
                     AppLog.put("服务器书籍章节加载成功: ${book.name}, 共 ${chapters.size} 章")
                 } else {
@@ -151,7 +156,12 @@ class BookInfoViewModel(application: Application) : BaseViewModel(application) {
                 }
             }.onFailure { e ->
                 AppLog.put("加载服务器书籍章节失败: ${e.localizedMessage}", e)
-                context.toastOnUi("加载章节失败: ${e.localizedMessage}")
+                val cachedChapters = appDb.bookChapterDao.getChapterList(book.bookUrl)
+                if (cachedChapters.isNotEmpty()) {
+                    chapterListData.postValue(cachedChapters)
+                } else {
+                    context.toastOnUi("加载章节失败: ${e.localizedMessage}")
+                }
             }
         }.onFinally {
             waitDialogData.postValue(false)

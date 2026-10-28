@@ -13,6 +13,7 @@ import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.BookProgress
 import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.AppWebDav
+import io.legado.app.help.ReaderServerSync
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.isLocal
 import io.legado.app.help.book.isLocalModified
@@ -67,22 +68,23 @@ class ReadMangaViewModel(application: Application) : BaseViewModel(application) 
             val msg = "初始化数据失败\n${it.localizedMessage}"
             AppLog.put(msg, it)
         }.onFinally {
-            ReadManga.saveRead()
+            ReadManga.saveRead(updateTime = false)
         }
     }
 
     private suspend fun initManga(book: Book) {
+        val isServerLocalBook = ReaderServerSync.isServerLocalBook(book)
         val isSameBook = ReadManga.book?.bookUrl == book.bookUrl
         if (isSameBook) {
             ReadManga.upData(book)
         } else {
             ReadManga.resetData(book)
         }
-        if (!book.isLocal && book.tocUrl.isEmpty() && !loadBookInfo(book)) {
+        if (!isServerLocalBook && !book.isLocal && book.tocUrl.isEmpty() && !loadBookInfo(book)) {
             return
         }
 
-        if (book.isLocal && !checkLocalBookFileExist(book)) {
+        if (!isServerLocalBook && book.isLocal && !checkLocalBookFileExist(book)) {
             return
         }
 
@@ -106,17 +108,38 @@ class ReadMangaViewModel(application: Application) : BaseViewModel(application) 
                     { progress -> ReadManga.mCallback?.sureNewProgress(progress) })
             } else {
                 syncBookProgress(book)
+                ReadManga.syncReaderProgress { progress ->
+                    ReadManga.mCallback?.sureNewProgress(progress)
+                }
             }
         }
 
         //自动换源
-        if (!book.isLocal && ReadManga.bookSource == null) {
+        if (!isServerLocalBook && !book.isLocal && ReadManga.bookSource == null) {
             autoChangeSource(book.name, book.author)
             return
         }
     }
 
     private suspend fun loadChapterListAwait(book: Book): Boolean {
+        if (ReaderServerSync.isServerLocalBook(book)) {
+            ReaderServerSync.initConfig()
+            return ReaderServerSync.getChapterList(book.bookUrl).fold(onSuccess = { chapters ->
+                if (chapters.isEmpty()) return@fold appDb.bookChapterDao.getChapterCount(book.bookUrl) > 0
+                appDb.bookChapterDao.delByBook(book.bookUrl)
+                appDb.bookChapterDao.insert(*chapters.toTypedArray())
+                book.totalChapterNum = chapters.size
+                appDb.bookDao.update(book)
+                ReadManga.onChapterListUpdated(book)
+                true
+            }, onFailure = { error ->
+                currentCoroutineContext().ensureActive()
+                val hasCachedToc = appDb.bookChapterDao.getChapterCount(book.bookUrl) > 0
+                AppLog.put("加载 Reader 漫画目录失败: ${error.localizedMessage}", error)
+                if (!hasCachedToc) ReadManga.mCallback?.loadFail(appCtx.getString(R.string.error_load_toc))
+                hasCachedToc
+            })
+        }
         val bookSource = ReadManga.bookSource ?: return true
         val oldBook = book.copy()
         WebBook.getChapterListAwait(bookSource, book, true).onSuccess { cList ->

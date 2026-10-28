@@ -24,7 +24,7 @@ abstract class BaseBooksAdapter<VB : ViewBinding>(context: Context) :
             override fun areContentsTheSame(oldItem: Book, newItem: Book): Boolean {
                 return when {
                     oldItem.durChapterTime != newItem.durChapterTime -> false
-                    oldItem.name != newItem.name -> false
+                    oldItem.getDisplayName() != newItem.getDisplayName() -> false
                     oldItem.author != newItem.author -> false
                     oldItem.durChapterTitle != newItem.durChapterTitle -> false
                     oldItem.latestChapterTitle != newItem.latestChapterTitle -> false
@@ -37,8 +37,8 @@ abstract class BaseBooksAdapter<VB : ViewBinding>(context: Context) :
 
             override fun getChangePayload(oldItem: Book, newItem: Book): Any? {
                 val bundle = bundleOf()
-                if (oldItem.name != newItem.name) {
-                    bundle.putString("name", newItem.name)
+                if (oldItem.getDisplayName() != newItem.getDisplayName()) {
+                    bundle.putString("name", newItem.getDisplayName())
                 }
                 if (oldItem.author != newItem.author) {
                     bundle.putString("author", newItem.author)

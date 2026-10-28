@@ -46,7 +46,6 @@ import io.legado.app.help.book.isLocal
 import io.legado.app.help.book.isLocalTxt
 import io.legado.app.help.book.isMobi
 import io.legado.app.help.book.removeType
-import io.legado.app.help.book.update
 import io.legado.app.help.config.AppConfig
 import io.legado.app.help.config.ReadBookConfig
 import io.legado.app.help.config.ReadTipConfig
@@ -353,8 +352,14 @@ class ReadBookActivity : BaseReadBookActivity(),
         networkChangedListener.register()
         networkChangedListener.onNetworkChanged = {
             // 当网络是可用状态且无需初始化时同步进度（初始化中已有同步进度逻辑）
-            if (AppConfig.syncBookProgressPlus && NetworkUtils.isAvailable() && !justInitData && ReadBook.inBookshelf) {
-                ReadBook.syncProgress({ progress -> sureNewProgress(progress) })
+            if (NetworkUtils.isAvailable() && !justInitData && ReadBook.inBookshelf) {
+                if (AppConfig.syncBookProgressPlus) {
+                    ReadBook.syncProgress(newProgressAction = { progress ->
+                        sureNewProgress(progress)
+                    })
+                } else {
+                    ReadBook.syncReaderProgress { progress -> sureNewProgress(progress) }
+                }
             }
         }
     }
@@ -365,6 +370,7 @@ class ReadBookActivity : BaseReadBookActivity(),
         backupJob?.cancel()
         binding.readView.pageDelegate?.abortAnim()
         ReadBook.saveRead()
+        ReadBook.saveSettings()
         ReadBook.cancelPreDownloadTask()
         unregisterReceiver(timeBatteryReceiver)
         upSystemUiVisibility()
@@ -443,11 +449,19 @@ class ReadBookActivity : BaseReadBookActivity(),
             }
         }
         lifecycleScope.launch {
-            val show = ReadBook.inBookshelf && withContext(IO) {
-                AppWebDav.isOk
+            val webDavReady = withContext(IO) {
+                AppConfig.syncBookProgress && AppWebDav.isOk
             }
-            menu.findItem(R.id.menu_get_progress)?.isVisible = show
-            menu.findItem(R.id.menu_cover_progress)?.isVisible = show
+            if (ReadBook.book?.bookUrl != book.bookUrl) return@launch
+            val targets = progressSyncMenuTargets(
+                inBookshelf = ReadBook.inBookshelf,
+                readerBook = book.bookUrl.startsWith("reader-v1://"),
+                readerConfigured = AppConfig.readerServerConfigured,
+                readerProgressEnabled = AppConfig.readerServerSyncProgress,
+                webDavReady = webDavReady,
+            )
+            menu.findItem(R.id.menu_get_progress)?.isVisible = targets.visible
+            menu.findItem(R.id.menu_cover_progress)?.isVisible = targets.visible
         }
     }
 
@@ -528,6 +542,7 @@ class ReadBookActivity : BaseReadBookActivity(),
             R.id.menu_enable_replace -> changeReplaceRuleState()
             R.id.menu_re_segment -> ReadBook.book?.let {
                 it.setReSegment(!it.getReSegment())
+                ReadBook.saveSettings()
                 item.isChecked = it.getReSegment()
                 ReadBook.loadContent(false)
             }
@@ -545,6 +560,7 @@ class ReadBookActivity : BaseReadBookActivity(),
                 } else {
                     it.removeDelTag(Book.rubyTag)
                 }
+                ReadBook.saveSettings()
                 refreshContentAll(it)
             }
 
@@ -555,6 +571,7 @@ class ReadBookActivity : BaseReadBookActivity(),
                 } else {
                     it.removeDelTag(Book.hTag)
                 }
+                ReadBook.saveSettings()
                 refreshContentAll(it)
             }
 
@@ -589,13 +606,37 @@ class ReadBookActivity : BaseReadBookActivity(),
                         ReadBook.book?.setPageAnim(0)  // 切换图片样式single后，自动切换为覆盖
                         binding.readView.upPageAnim()
                     }
+                    ReadBook.saveSettings()
                     ReadBook.loadContent(false)
                 }
             }
 
             R.id.menu_get_progress -> ReadBook.book?.let {
-                viewModel.syncBookProgress(it) { progress ->
-                    sureSyncProgress(progress)
+                val expectedBookUrl = it.bookUrl
+                lifecycleScope.launch {
+                    val webDavReady = withContext(IO) {
+                        AppConfig.syncBookProgress && AppWebDav.isOk
+                    }
+                    val currentBook = ReadBook.book
+                        ?.takeIf { current -> current.bookUrl == expectedBookUrl }
+                        ?: return@launch
+                    val targets = progressSyncMenuTargets(
+                        inBookshelf = ReadBook.inBookshelf,
+                        readerBook = currentBook.bookUrl.startsWith("reader-v1://"),
+                        readerConfigured = AppConfig.readerServerConfigured,
+                        readerProgressEnabled = AppConfig.readerServerSyncProgress,
+                        webDavReady = webDavReady,
+                    )
+                    if (targets.webDav) {
+                        viewModel.syncBookProgress(currentBook) { progress ->
+                            sureSyncProgress(progress)
+                        }
+                    }
+                    if (targets.readerServer) {
+                        ReadBook.syncReaderProgress { progress ->
+                            sureSyncProgress(progress)
+                        }
+                    }
                 }
             }
 
@@ -1472,10 +1513,18 @@ class ReadBookActivity : BaseReadBookActivity(),
     }
 
     private fun sureSyncProgress(progress: BookProgress) {
+        val expectedBookUrl = ReadBook.book?.bookUrl ?: return
+        val expectedChapterIndex = ReadBook.durChapterIndex
+        val expectedChapterPos = ReadBook.durChapterPos
         alert(R.string.get_book_progress) {
             setMessage(R.string.current_progress_exceeds_cloud)
             okButton {
-                ReadBook.setProgress(progress)
+                if (ReadBook.book?.bookUrl == expectedBookUrl &&
+                    ReadBook.durChapterIndex == expectedChapterIndex &&
+                    ReadBook.durChapterPos == expectedChapterPos
+                ) {
+                    ReadBook.setProgress(progress)
+                }
             }
             noButton()
         }
@@ -1560,7 +1609,7 @@ class ReadBookActivity : BaseReadBookActivity(),
     override fun changeReplaceRuleState() {
         ReadBook.book?.let {
             it.setUseReplaceRule(!it.getUseReplaceRule())
-            ReadBook.saveRead()
+            ReadBook.saveSettings()
             menu?.findItem(R.id.menu_enable_replace)?.isChecked = it.getUseReplaceRule()
             viewModel.replaceRuleChanged()
         }
@@ -1573,18 +1622,25 @@ class ReadBookActivity : BaseReadBookActivity(),
             ReadBook.book?.let {
                 AppWebDav.uploadBookProgress(it)
                 ensureActive()
-                it.update()
                 Backup.autoBack(this@ReadBookActivity)
             }
         }
     }
 
     override fun sureNewProgress(progress: BookProgress) {
+        val expectedBookUrl = ReadBook.book?.bookUrl ?: return
+        val expectedChapterIndex = ReadBook.durChapterIndex
+        val expectedChapterPos = ReadBook.durChapterPos
         syncDialog?.dismiss()
         syncDialog = alert(R.string.get_book_progress) {
             setMessage(R.string.cloud_progress_exceeds_current)
             okButton {
-                ReadBook.setProgress(progress)
+                if (ReadBook.book?.bookUrl == expectedBookUrl &&
+                    ReadBook.durChapterIndex == expectedChapterIndex &&
+                    ReadBook.durChapterPos == expectedChapterPos
+                ) {
+                    ReadBook.setProgress(progress)
+                }
             }
             noButton()
         }

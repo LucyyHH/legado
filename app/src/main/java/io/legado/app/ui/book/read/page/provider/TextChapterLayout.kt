@@ -11,6 +11,7 @@ import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
 import io.legado.app.help.book.BookContent
 import io.legado.app.help.book.BookHelp
+import io.legado.app.help.book.ImagePageLayout
 import io.legado.app.help.book.getBookSource
 import io.legado.app.help.config.AppConfig
 import io.legado.app.help.config.ReadBookConfig
@@ -203,7 +204,10 @@ class TextChapterLayout(
         val isSingleImageStyle = imageStyle.equals(Book.imgStyleSingle, true)
         val isTextImageStyle = imageStyle.equals(Book.imgStyleText, true)
 
-        if (titleMode != 2 || bookChapter.isVolume || contents.isEmpty()) {
+        if (ImagePageLayout.showChapterTitle(
+                ImagePageLayout.isPageBased(book, bookChapter, contents.joinToString("\n")),
+                titleMode != 2 || bookChapter.isVolume || contents.isEmpty()
+            )) {
             //标题非隐藏
             displayTitle.splitNotBlank("\n").forEach { text ->
                 setTypeText(

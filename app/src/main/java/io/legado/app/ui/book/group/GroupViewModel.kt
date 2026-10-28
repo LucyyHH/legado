@@ -4,6 +4,8 @@ import android.app.Application
 import io.legado.app.base.BaseViewModel
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.BookGroup
+import io.legado.app.utils.toastOnUi
+import splitties.init.appCtx
 
 class GroupViewModel(application: Application) : BaseViewModel(application) {
 
@@ -23,17 +25,22 @@ class GroupViewModel(application: Application) : BaseViewModel(application) {
         finally: () -> Unit
     ) {
         execute {
-            val groupId = appDb.bookGroupDao.getUnusedId()
-            val bookGroup = BookGroup(
-                groupId = groupId,
-                groupName = groupName,
-                cover = cover,
-                bookSort = bookSort,
-                enableRefresh = enableRefresh,
-                order = appDb.bookGroupDao.maxOrder.plus(1)
-            )
-            appDb.bookGroupDao.getByID(groupId) ?: appDb.bookDao.removeGroup(groupId)
-            appDb.bookGroupDao.insert(bookGroup)
+            // Allocation and insertion must not race Reader's group importer.
+            appDb.runInTransaction {
+                val groupId = appDb.bookGroupDao.getUnusedId()
+                val bookGroup = BookGroup(
+                    groupId = groupId,
+                    groupName = groupName,
+                    cover = cover,
+                    bookSort = bookSort,
+                    enableRefresh = enableRefresh,
+                    order = appDb.bookGroupDao.maxOrder.plus(1)
+                )
+                appDb.bookGroupDao.getByID(groupId) ?: appDb.bookDao.removeGroup(groupId)
+                appDb.bookGroupDao.insert(bookGroup)
+            }
+        }.onError {
+            appCtx.toastOnUi(it.localizedMessage ?: "添加分组失败")
         }.onFinally {
             finally()
         }
@@ -41,8 +48,10 @@ class GroupViewModel(application: Application) : BaseViewModel(application) {
 
     fun delGroup(bookGroup: BookGroup, finally: () -> Unit) {
         execute {
-            appDb.bookGroupDao.delete(bookGroup)
-            appDb.bookDao.removeGroup(bookGroup.groupId)
+            appDb.runInTransaction {
+                appDb.bookGroupDao.delete(bookGroup)
+                appDb.bookDao.removeGroup(bookGroup.groupId)
+            }
         }.onFinally {
             finally()
         }

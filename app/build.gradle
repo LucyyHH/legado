@@ -144,6 +144,15 @@ android {
         // Adds exported schema location as test app assets.
         androidTest.assets.srcDirs += files("$projectDir/schemas".toString())
     }
+    testOptions {
+        unitTests.includeAndroidResources = true
+        unitTests.all {
+            // Book.ReadConfig contains LocalDate; Gson's existing reflection works
+            // on Android, while the host JDK requires this package to be opened.
+            jvmArgs '--add-opens=java.base/java.time=ALL-UNNAMED'
+            inputs.property('readerCompatTestUrl', providers.environmentVariable('READER_COMPAT_TEST_URL').orElse(''))
+        }
+    }
     lint {
         checkDependencies = true
     }
@@ -160,6 +169,7 @@ dependencies {
     //coreLibraryDesugaring('com.android.tools:desugar_jdk_libs_nio:2.0.4')
     coreLibraryDesugaring(libs.desugar)
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
     androidTestImplementation(libs.bundles.androidTest)
     //kotlin
     //noinspection GradleDependency,DifferentStdlibGradleVersion

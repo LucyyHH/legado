@@ -37,7 +37,7 @@ abstract class BaseBooksAdapter<VH : RecyclerView.ViewHolder>(
             return when {
                 oldItem is Book && newItem is Book -> {
                     oldItem.durChapterTime == newItem.durChapterTime &&
-                            oldItem.name == newItem.name &&
+                            oldItem.getDisplayName() == newItem.getDisplayName() &&
                             oldItem.author == newItem.author &&
                             oldItem.durChapterTitle == newItem.durChapterTitle &&
                             oldItem.latestChapterTitle == newItem.latestChapterTitle &&
@@ -59,8 +59,8 @@ abstract class BaseBooksAdapter<VH : RecyclerView.ViewHolder>(
             val bundle = bundleOf()
             when {
                 oldItem is Book && newItem is Book -> {
-                    if (oldItem.name != newItem.name) {
-                        bundle.putString("name", newItem.name)
+                    if (oldItem.getDisplayName() != newItem.getDisplayName()) {
+                        bundle.putString("name", newItem.getDisplayName())
                     }
                     if (oldItem.author != newItem.author) {
                         bundle.putString("author", newItem.author)

@@ -105,7 +105,7 @@ class ReadBookViewModel(application: Application) : BaseViewModel(application) {
             ReadBook.upMsg(msg)
             AppLog.put(msg, it)
         }.onFinally {
-            ReadBook.saveRead()
+            ReadBook.saveRead(updateTime = false)
         }
     }
 
@@ -144,6 +144,9 @@ class ReadBookViewModel(application: Application) : BaseViewModel(application) {
                 ReadBook.syncProgress({ progress -> ReadBook.callBack?.sureNewProgress(progress) })
             } else {
                 syncBookProgress(book)
+                ReadBook.syncReaderProgress { progress ->
+                    ReadBook.callBack?.sureNewProgress(progress)
+                }
             }
         }
         if (!isServerLocalBook && !book.isLocal && ReadBook.bookSource == null) {
@@ -194,26 +197,26 @@ class ReadBookViewModel(application: Application) : BaseViewModel(application) {
     private suspend fun loadChapterListAwait(book: Book): Boolean {
         // 服务器本地书籍通过 API 获取章节列表
         if (ReaderServerSync.isServerLocalBook(book)) {
-            kotlin.runCatching {
-                ReaderServerSync.initConfig()
-                ReaderServerSync.getChapterList(book.bookUrl).onSuccess { chapters ->
-                    if (chapters.isNotEmpty()) {
-                        appDb.bookChapterDao.delByBook(book.bookUrl)
-                        appDb.bookChapterDao.insert(*chapters.toTypedArray())
-                        book.totalChapterNum = chapters.size
-                        appDb.bookDao.update(book)
-                        ReadBook.onChapterListUpdated(book)
-                        AppLog.put("服务器书籍章节加载成功: ${book.name}, 共 ${chapters.size} 章")
-                    }
-                }.onFailure {
-                    throw it
+            ReaderServerSync.initConfig()
+            return ReaderServerSync.getChapterList(book.bookUrl).fold(onSuccess = { chapters ->
+                if (chapters.isNotEmpty()) {
+                    appDb.bookChapterDao.delByBook(book.bookUrl)
+                    appDb.bookChapterDao.insert(*chapters.toTypedArray())
+                    book.totalChapterNum = chapters.size
+                    appDb.bookDao.updateReaderChapterCount(book.bookUrl, chapters.size)
+                    ReadBook.onChapterListUpdated(book)
+                    AppLog.put("服务器书籍章节加载成功: ${book.name}, 共 ${chapters.size} 章")
+                    true
+                } else {
+                    appDb.bookChapterDao.getChapterCount(book.bookUrl) > 0
                 }
-                return true
-            }.onFailure {
-                AppLog.put("服务器书籍章节加载失败: ${it.localizedMessage}", it)
-                ReadBook.upMsg("加载章节失败: ${it.localizedMessage}")
-                return false
-            }
+            }, onFailure = { error ->
+                currentCoroutineContext().ensureActive()
+                val hasCachedToc = appDb.bookChapterDao.getChapterCount(book.bookUrl) > 0
+                AppLog.put("服务器书籍章节加载失败: ${error.localizedMessage}", error)
+                if (!hasCachedToc) ReadBook.upMsg("加载章节失败: ${error.localizedMessage}")
+                hasCachedToc
+            })
         }
         
         if (book.isLocal) {
@@ -289,25 +292,6 @@ class ReadBookViewModel(application: Application) : BaseViewModel(application) {
                 ReadBook.setProgress(progress)
                 AppLog.put("自动同步阅读进度成功《${book.name}》 ${progress.durChapterTitle}")
                 context.toastOnUi("已同步最新阅读进度")
-            }
-        }
-    }
-
-    /**
-     * 上传阅读进度到 Reader Server
-     */
-    fun uploadProgressToReaderServer(book: Book) {
-        if (!AppConfig.readerServerSyncProgress || !AppConfig.readerServerConfigured) return
-        execute {
-            ReaderServerSync.initConfig()
-            ReaderServerSync.uploadBookProgress(book)
-        }.onError {
-            AppLog.put("上传阅读进度到Reader Server失败《${book.name}》\n${it.localizedMessage}", it)
-        }.onSuccess { result ->
-            result.onSuccess { success ->
-                if (success) {
-                    AppLog.put("上传阅读进度到Reader Server成功《${book.name}》")
-                }
             }
         }
     }

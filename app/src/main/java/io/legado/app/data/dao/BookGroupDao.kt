@@ -67,7 +67,7 @@ interface BookGroupDao {
     @get:Query("SELECT * FROM book_groups ORDER BY `order`")
     val all: List<BookGroup>
 
-    @get:Query("select count(*) < 64 from book_groups where groupId >= 0 or groupId == ${Long.MIN_VALUE}")
+    @get:Query("select coalesce(sum(groupId), 0) < ${Long.MAX_VALUE} from book_groups where groupId > 0")
     val canAddGroup: Boolean
 
     @Query("update book_groups set show = 1 where groupId = :groupId")
@@ -95,9 +95,10 @@ interface BookGroupDao {
     fun getUnusedId(): Long {
         var id = 1L
         val idsSum = idsSum
-        while (id and idsSum != 0L) {
+        while (id > 0 && id and idsSum != 0L) {
             id = id.shl(1)
         }
+        check(id > 0) { "分组已达上限(63个)" }
         return id
     }
 }

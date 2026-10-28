@@ -351,7 +351,7 @@ class PageView(context: Context) : FrameLayout(context) {
      */
     @SuppressLint("SetTextI18n")
     fun setProgress(textPage: TextPage) = textPage.apply {
-        tvBookName?.setTextIfNotEqual(ReadBook.book?.name)
+        tvBookName?.setTextIfNotEqual(ReadBook.book?.getDisplayName())
         tvTitle?.setTextIfNotEqual(textPage.title)
         val readProgress = readProgress
         tvTotalProgress?.setTextIfNotEqual(readProgress)

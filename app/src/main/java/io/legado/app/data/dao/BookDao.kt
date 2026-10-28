@@ -80,6 +80,14 @@ interface BookDao {
     @Query("SELECT * FROM books WHERE (`group` & :group) > 0")
     fun getBooksByGroup(group: Long): List<Book>
 
+    @Query("SELECT DISTINCT `group` FROM books WHERE `group` != 0")
+    fun getGroupMasks(): List<Long>
+
+    /** Add imported classifications without replacing locally selected groups. */
+    @Query("""UPDATE books SET `group` = (`group` | :mask)
+        WHERE bookUrl = :bookUrl AND (`group` & :mask) != :mask""")
+    fun addReaderGroups(bookUrl: String, mask: Long): Int
+
     @Query("SELECT * FROM books WHERE `name` in (:names)")
     fun findByName(vararg names: String): List<Book>
 
@@ -148,6 +156,31 @@ interface BookDao {
     @Update
     fun update(vararg book: Book)
 
+    /** An upload receipt must never write an old reading snapshot back over the current row. */
+    @Query("UPDATE books SET syncTime = max(syncTime, :syncedAt) WHERE bookUrl = :bookUrl AND durChapterTime <= :uploadedReadTime")
+    fun markReaderProgressSynced(bookUrl: String, uploadedReadTime: Long, syncedAt: Long): Int
+
+    @Query("""UPDATE books SET durChapterIndex = :chapterIndex, durChapterPos = :chapterPos,
+        durChapterTitle = :chapterTitle, durChapterTime = :readTime, syncTime = max(syncTime, :syncedAt),
+        totalChapterNum = CASE WHEN :chapterCount > 0 THEN :chapterCount ELSE totalChapterNum END
+        WHERE bookUrl = :bookUrl AND durChapterTime < :readTime""")
+    fun applyReaderProgress(
+        bookUrl: String, chapterIndex: Int, chapterPos: Int, chapterTitle: String?,
+        readTime: Long, chapterCount: Int, syncedAt: Long
+    ): Int
+
+    @Query("""UPDATE books SET intro = :intro, coverUrl = :coverUrl, kind = :kind,
+        originName = :originName, type = :type, variable = :variable, origin = '${BookType.readerServerLocalTag}',
+        totalChapterNum = CASE WHEN :chapterCount > 0 THEN :chapterCount ELSE totalChapterNum END,
+        syncTime = max(syncTime, :syncedAt) WHERE bookUrl = :bookUrl""")
+    fun updateReaderMetadata(
+        bookUrl: String, intro: String?, coverUrl: String?, kind: String?, originName: String,
+        type: Int, chapterCount: Int, variable: String?, syncedAt: Long
+    ): Int
+
+    @Query("UPDATE books SET totalChapterNum = :chapterCount WHERE bookUrl = :bookUrl")
+    fun updateReaderChapterCount(bookUrl: String, chapterCount: Int)
+
     @Delete
     fun delete(vararg book: Book)
 
@@ -156,6 +189,16 @@ interface BookDao {
         delete(oldBook)
         insert(newBook)
     }
+
+    @Query("""UPDATE books SET lastCheckCount = 0, durChapterIndex = :chapterIndex,
+        durChapterPos = :chapterPos, durChapterTitle = :chapterTitle, durChapterTime = :readTime
+        WHERE bookUrl = :bookUrl AND durChapterTime <= :readTime""")
+    fun saveReadingProgress(
+        bookUrl: String, chapterIndex: Int, chapterPos: Int, chapterTitle: String?, readTime: Long
+    ): Int
+
+    @Query("UPDATE books SET charset = :charset, readConfig = :readConfigJson WHERE bookUrl = :bookUrl")
+    fun saveReadingSettings(bookUrl: String, charset: String?, readConfigJson: String?)
 
     @Query("update books set durChapterPos = :pos where bookUrl = :bookUrl")
     fun upProgress(bookUrl: String, pos: Int)

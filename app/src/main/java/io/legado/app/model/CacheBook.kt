@@ -9,9 +9,9 @@ import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.BookSource
 import io.legado.app.exception.ConcurrentException
-import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.ReaderServerSync
 import io.legado.app.help.book.BookHelp
+import io.legado.app.help.book.ReaderServerCache
 import io.legado.app.help.book.isLocal
 import io.legado.app.help.config.AppConfig
 import io.legado.app.help.coroutine.CompositeCoroutine
@@ -76,6 +76,17 @@ object CacheBook {
         cacheBook = CacheBookModel(bookSource, book)
         cacheBookMap[bookUrl] = cacheBook
         return cacheBook
+    }
+
+    @Synchronized
+    fun getOrCreate(book: Book): CacheBookModel? {
+        if (!ReaderServerSync.isServerLocalBook(book)) return null
+        return cacheBookMap[book.bookUrl]?.also {
+            it.bookSource = null
+            it.book = book
+        } ?: CacheBookModel(null, book).also {
+            cacheBookMap[book.bookUrl] = it
+        }
     }
 
     @Synchronized
@@ -323,22 +334,9 @@ object CacheBook {
             chapter: BookChapter
         ) {
             Coroutine.async(scope, context, executeContext = context) {
-                // 确保服务器 API 已初始化
-                ReaderServerSync.initConfig()
-                ReaderServerSync.getBookContent(book.bookUrl, chapter.index).getOrThrow()
-            }.onSuccess { content ->
-                if (content.isNotBlank()) {
-                    try {
-                        BookHelp.saveText(book, chapter, content)
-                        postEvent(EventBus.SAVE_CONTENT, Pair(book, chapter))
-                        onSuccess(chapter)
-                    } catch (e: Exception) {
-                        AppLog.put("保存章节内容失败: ${book.name} - ${chapter.title}", e)
-                        onError(chapter, e)
-                    }
-                } else {
-                    onError(chapter, NoStackTraceException("章节内容为空"))
-                }
+                ReaderServerCache.cacheChapter(book, chapter)
+            }.onSuccess {
+                onSuccess(chapter)
             }.onError {
                 AppLog.put("下载服务器章节失败: ${book.name} - ${chapter.title}", it)
                 onPreError(chapter, it)
@@ -388,9 +386,11 @@ object CacheBook {
             onDownloadSet.add(chapterIndex)
             if (BookHelp.hasContent(book, chapter)) {
                 Coroutine.async(scope, context, executeContext = context) {
-                    BookHelp.getContent(book, chapter)?.let {
-                        bookSource?.let { source ->
-                            BookHelp.saveImages(source, book, chapter, it, 1)
+                    if (bookSource == null) {
+                        ReaderServerCache.cacheChapter(book, chapter)
+                    } else {
+                        BookHelp.getContent(book, chapter)?.let {
+                            BookHelp.saveImages(bookSource, book, chapter, it, 1, throwOnError = true)
                         }
                     }
                 }.onSuccess {
@@ -450,14 +450,7 @@ object CacheBook {
             }
             try {
                 val content = if (bookSource == null) {
-                    // 服务器书籍：通过 API 获取内容
-                    ReaderServerSync.initConfig()
-                    val serverContent = ReaderServerSync.getBookContent(book.bookUrl, chapter.index).getOrThrow()
-                    if (serverContent.isNotBlank()) {
-                        BookHelp.saveText(book, chapter, serverContent)
-                        postEvent(EventBus.SAVE_CONTENT, Pair(book, chapter))
-                    }
-                    serverContent
+                    ReaderServerCache.cacheChapter(book, chapter)
                 } else {
                     WebBook.getContentAwait(bookSource!!, book, chapter)
                 }
@@ -472,7 +465,7 @@ object CacheBook {
                 onError(chapter, e)
                 ReadBook.downloadFailChapters[chapter.index] =
                     (ReadBook.downloadFailChapters[chapter.index] ?: 0) + 1
-                return "获取正文失败\n${e.localizedMessage}"
+                throw e
             } finally {
                 postEvent(EventBus.UP_DOWNLOAD, book.bookUrl)
             }
@@ -494,36 +487,21 @@ object CacheBook {
             // 服务器书籍：通过 API 获取内容
             if (bookSource == null) {
                 Coroutine.async(scope, IO) {
-                    // 确保服务器 API 已初始化
-                    ReaderServerSync.initConfig()
-                    ReaderServerSync.getBookContent(book.bookUrl, chapter.index).getOrThrow()
+                    ReaderServerCache.cacheChapter(book, chapter)
                 }.onSuccess { content ->
-                    if (content.isNotBlank()) {
-                        try {
-                            BookHelp.saveText(book, chapter, content)
-                            postEvent(EventBus.SAVE_CONTENT, Pair(book, chapter))
-                            onSuccess(chapter)
-                            ReadBook.downloadedChapters.add(chapter.index)
-                            ReadBook.downloadFailChapters.remove(chapter.index)
-                            downloadFinish(chapter, content, resetPageOffset)
-                        } catch (e: Exception) {
-                            AppLog.put("保存章节内容失败: ${book.name} - ${chapter.title}", e)
-                            onError(chapter, e)
-                            downloadFinish(chapter, "保存失败\n${e.localizedMessage}", resetPageOffset)
-                        }
-                    } else {
-                        onError(chapter, NoStackTraceException("章节内容为空"))
-                        downloadFinish(chapter, "章节内容为空", resetPageOffset)
-                    }
+                    onSuccess(chapter)
+                    ReadBook.downloadedChapters.add(chapter.index)
+                    ReadBook.downloadFailChapters.remove(chapter.index)
+                    downloadFinish(chapter, content, resetPageOffset)
                 }.onError {
                     AppLog.put("下载服务器章节失败: ${book.name} - ${chapter.title}", it)
                     onError(chapter, it)
                     ReadBook.downloadFailChapters[chapter.index] =
                         (ReadBook.downloadFailChapters[chapter.index] ?: 0) + 1
-                    downloadFinish(chapter, "获取正文失败\n${it.localizedMessage}", resetPageOffset)
+                    serverDownloadFailed(chapter, "获取正文失败: ${it.localizedMessage}")
                 }.onCancel {
                     onCancel(chapter.index)
-                    downloadFinish(chapter, "download canceled", resetPageOffset, true)
+                    serverDownloadFailed(chapter, "download canceled", true)
                 }.onFinally {
                     postEvent(EventBus.UP_DOWNLOAD, book.bookUrl)
                 }.start()
@@ -569,6 +547,18 @@ object CacheBook {
                     resetPageOffset = resetPageOffset,
                     canceled = canceled
                 )
+            }
+        }
+
+        private fun serverDownloadFailed(
+            chapter: BookChapter,
+            message: String,
+            canceled: Boolean = false
+        ) {
+            if (ReadBook.book?.bookUrl != book.bookUrl) return
+            ReadBook.removeLoading(chapter.index)
+            if (!canceled && chapter.index == ReadBook.durChapterIndex) {
+                ReadBook.upMsg(message)
             }
         }
 

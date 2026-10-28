@@ -35,7 +35,7 @@ Legado is a free and open source novel reader for Android.
 7.支持高度自定义阅读界面，切换字体、颜色、背景、行距、段距、加粗、简繁转换等。<br>
 8.支持多种翻页模式，覆盖、仿真、滑动、滚动等。<br>
 9.软件开源，持续优化，无广告。
-10.支持 Reader Server 远程阅读 (https://github.com/hectorqin/reader)，配置在备份与恢复-阅读服务器设置里，输入服务器地址、用户名、密码，点击立即同步会把服务器的书架、分组、书源、订阅源同步到本地
+10.支持新版 Reader Server（/api/v1）远程阅读 (https://github.com/hectorqin/reader)，配置在备份与恢复-阅读服务器设置里。支持书架导入、TXT/EPUB/PDF/章节书/漫画远程阅读、进度同步与离线缓存。同步书架时，将系列和标签分别导入为“Reader · 系列 · 名称”和“Reader · 标签 · 名称”分组；重复同步复用同名导入分组，只补充分组归属，保留本地手动分组，也不自动删除已经导入的归属。分类变化或重命名后可在客户端手动整理旧分组；分组容量不足会在同步详情中报告。分类导入不会向服务器写入分组或书籍元数据。
 </details>
 
 <a href="#readme">

@@ -66,11 +66,8 @@ data class Server(
         var password: String,
         var token: String? = null,
         var tokenExpireTime: Long = 0,
-        var syncBookSource: Boolean = true,
         var syncBookshelf: Boolean = true,
-        var syncBookGroup: Boolean = true,
-        var syncBookProgress: Boolean = true,
-        var syncRssSource: Boolean = true
+        var syncBookProgress: Boolean = true
     ) : Parcelable
 
 }

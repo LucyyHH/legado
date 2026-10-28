@@ -4,33 +4,38 @@ import io.legado.app.constant.AppLog
 import io.legado.app.constant.BookType
 import io.legado.app.constant.PreferKey
 import io.legado.app.data.appDb
+import io.legado.app.data.AppDatabase
 import io.legado.app.data.entities.Book
-import io.legado.app.data.entities.BookGroup
-import io.legado.app.data.entities.BookSource
-import io.legado.app.data.entities.RssSource
 import io.legado.app.data.entities.Server
 import io.legado.app.exception.NoStackTraceException
+import io.legado.app.help.book.ReaderServerPdf
+import io.legado.app.help.book.ReaderBookDisplay
+import io.legado.app.model.localBook.PdfFile
+import io.legado.app.help.config.AppConfig
 import io.legado.app.model.remote.ReaderServerApi
 import io.legado.app.utils.NetworkUtils
 import io.legado.app.utils.SecurePreferences
 import io.legado.app.utils.getPrefBoolean
 import io.legado.app.utils.getPrefString
-import io.legado.app.utils.putPrefString
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import splitties.init.appCtx
+import java.io.File
 
 /**
  * Reader Server 同步管理器
- * 负责与 reader3 服务器进行数据同步
+ * 同步新版 Reader 的书架和阅读进度
  */
 object ReaderServerSync {
-    private const val TAG = "ReaderServerSync"
     
     private var api: ReaderServerApi? = null
     private var config: Server.ReaderServerConfig? = null
+    private val configMutex = Mutex()
     
     val isConfigured: Boolean
         get() = config != null && config?.url?.isNotBlank() == true
@@ -43,79 +48,59 @@ object ReaderServerSync {
      */
     suspend fun initConfig() {
         withContext(Dispatchers.IO) {
-            kotlin.runCatching {
-                api = null
-                config = null
-                
-                val serverUrl = appCtx.getPrefString(PreferKey.readerServerUrl)
-                val username = appCtx.getPrefString(PreferKey.readerServerUsername)
-                // 从加密存储读取密码
-                val password = SecurePreferences.getString(PreferKey.readerServerPassword)
-                
-                if (!serverUrl.isNullOrBlank() && !username.isNullOrBlank() && !password.isNullOrBlank()) {
-                    // 从加密存储读取 token
+            configMutex.withLock {
+                syncCatching {
+                    val serverUrl = appCtx.getPrefString(PreferKey.readerServerUrl)?.trim()?.trimEnd('/')
+                    val username = appCtx.getPrefString(PreferKey.readerServerUsername)
+                    val password = SecurePreferences.getString(PreferKey.readerServerPassword)
+                    if (serverUrl.isNullOrBlank() || username.isNullOrBlank() || password.isNullOrBlank()) {
+                        api = null
+                        config = null
+                        return@syncCatching
+                    }
                     val savedToken = SecurePreferences.getString(PreferKey.readerServerToken)
                     val tokenExpireTime = SecurePreferences.getLong(PreferKey.readerServerTokenExpire, 0L)
-                    
+                    val savedTokenOwner = SecurePreferences.getString("${PreferKey.readerServerToken}.owner")
+                    val tokenOwner = "$serverUrl\n$username"
                     val serverConfig = Server.ReaderServerConfig(
                         url = serverUrl,
                         username = username,
                         password = password,
                         token = savedToken,
                         tokenExpireTime = tokenExpireTime,
-                        syncBookSource = appCtx.getPrefBoolean(PreferKey.readerServerSyncBookSource, true),
                         syncBookshelf = appCtx.getPrefBoolean(PreferKey.readerServerSyncBookshelf, true),
-                        syncBookGroup = appCtx.getPrefBoolean(PreferKey.readerServerSyncBookGroup, true),
-                        syncBookProgress = appCtx.getPrefBoolean(PreferKey.readerServerSyncProgress, true),
-                        syncRssSource = appCtx.getPrefBoolean(PreferKey.readerServerSyncRssSource, true)
+                        syncBookProgress = appCtx.getPrefBoolean(PreferKey.readerServerSyncProgress, true)
                     )
-                    
-                    config = serverConfig
-                    val serverApi = ReaderServerApi(serverConfig)
-                    // 如果有保存的 token，恢复到 API 实例
-                    if (!savedToken.isNullOrBlank() && tokenExpireTime > System.currentTimeMillis()) {
-                        serverApi.setAccessToken(savedToken, tokenExpireTime)
+                    val previous = config
+                    val sameCredentials = previous != null && previous.url == serverUrl && previous.username == username &&
+                            previous.password == password
+                    if (api == null || !sameCredentials) {
+                        // Credentials identify the API instance, including its refreshed session.
+                        // Never restore another server/account's token after a configuration change.
+                        api = ReaderServerApi(serverConfig).also { serverApi ->
+                            if (previous == null && savedTokenOwner == tokenOwner && !savedToken.isNullOrBlank() && tokenExpireTime > System.currentTimeMillis()) {
+                                serverApi.setAccessToken(savedToken, tokenExpireTime)
+                            }
+                        }
                     }
-                    api = serverApi
+                    config = serverConfig
+                }.onFailure {
+                    api = null
+                    config = null
+                    AppLog.put("初始化 Reader Server 配置失败: ${it.message}", it)
                 }
-            }.onFailure {
-                AppLog.put("初始化 Reader Server 配置失败: ${it.message}", it)
             }
         }
     }
-    
-    /**
-     * 更新配置
-     */
-    suspend fun updateConfig(
-        serverUrl: String,
-        username: String,
-        password: String,
-        syncBookSource: Boolean = true,
-        syncBookshelf: Boolean = true,
-        syncBookProgress: Boolean = true,
-        syncRssSource: Boolean = true
-    ) {
-        withContext(Dispatchers.IO) {
-            appCtx.putPrefString(PreferKey.readerServerUrl, serverUrl)
-            appCtx.putPrefString(PreferKey.readerServerUsername, username)
-            // 密码存储到加密存储
-            SecurePreferences.putString(PreferKey.readerServerPassword, password)
-            
-            // 清除旧token（从加密存储）
-            SecurePreferences.putString(PreferKey.readerServerToken, "")
-            SecurePreferences.putLong(PreferKey.readerServerTokenExpire, 0L)
-            
-            initConfig()
-        }
-    }
-    
+
     /**
      * 保存token信息（到加密存储）
      */
-    private fun saveTokenInfo(token: String?, expireTime: Long) {
+    private fun saveTokenInfo(token: String?, expireTime: Long, owner: ReaderServerApi) {
+        if (api !== owner) return
         SecurePreferences.putString(PreferKey.readerServerToken, token ?: "")
         SecurePreferences.putLong(PreferKey.readerServerTokenExpire, expireTime)
+        config?.let { SecurePreferences.putString("${PreferKey.readerServerToken}.owner", "${it.url}\n${it.username}") }
     }
     
     /**
@@ -123,7 +108,7 @@ object ReaderServerSync {
      */
     suspend fun testConnection(): Result<Boolean> {
         return withContext(Dispatchers.IO) {
-            kotlin.runCatching {
+            syncCatching {
                 if (!NetworkUtils.isAvailable()) {
                     throw NoStackTraceException("网络不可用")
                 }
@@ -134,508 +119,257 @@ object ReaderServerSync {
                 
                 // 登录成功后保存token
                 val (token, expireTime) = serverApi.getTokenInfo()
-                saveTokenInfo(token, expireTime)
+                saveTokenInfo(token, expireTime, serverApi)
                 
                 true
             }
         }
     }
     
-    /**
-     * 同步书源
-     * 双向同步：本地有而服务器没有的上传，服务器有而本地没有的下载
-     * 都有的比较更新时间，保留较新的
-     */
-    suspend fun syncBookSources(): Result<SyncResult> {
-        return withContext(Dispatchers.IO) {
-            kotlin.runCatching {
-                if (!NetworkUtils.isAvailable()) {
-                    throw NoStackTraceException("网络不可用")
-                }
-                val serverApi = api ?: throw NoStackTraceException("服务器未配置")
-                if (config?.syncBookSource != true) {
-                    return@runCatching SyncResult(0, 0, 0)
-                }
-                
-                currentCoroutineContext().ensureActive()
-                
-                // 获取服务器书源
-                val serverSources = serverApi.getBookSources()
-                val serverSourceMap = serverSources.associateBy { it.bookSourceUrl }
-                
-                // 获取本地书源
-                val localSources = appDb.bookSourceDao.all
-                val localSourceMap = localSources.associateBy { it.bookSourceUrl }
-                
-                var uploaded = 0
-                var downloaded = 0
-                var updated = 0
-                
-                val toUpload = mutableListOf<BookSource>()
-                val toDownload = mutableListOf<BookSource>()
-                
-                // 检查本地书源
-                for (localSource in localSources) {
-                    val serverSource = serverSourceMap[localSource.bookSourceUrl]
-                    if (serverSource == null) {
-                        // 服务器没有，需要上传
-                        toUpload.add(localSource)
-                    } else {
-                        // 都有，比较更新时间
-                        if (localSource.lastUpdateTime > serverSource.lastUpdateTime) {
-                            // 本地较新，上传
-                            toUpload.add(localSource)
-                        } else if (serverSource.lastUpdateTime > localSource.lastUpdateTime) {
-                            // 服务器较新，下载
-                            toDownload.add(serverSource)
+    /** Import the Reader shelf and reconcile reading progress by its last-read timestamp. */
+    suspend fun syncBookshelf(): Result<SyncResult> = withContext(Dispatchers.IO) {
+        syncCatching {
+            if (!NetworkUtils.isAvailable()) throw NoStackTraceException("网络不可用")
+            val serverApi = api ?: throw NoStackTraceException("服务器未配置")
+            val syncConfig = config ?: throw NoStackTraceException("服务器未配置")
+            syncServerBookshelf(serverApi, syncConfig, appDb)
+        }
+    }
+
+    /** V1 identities are scoped to the server and account; never merge by title/author. */
+    internal suspend fun syncServerBookshelf(
+        serverApi: ReaderServerApi,
+        syncConfig: Server.ReaderServerConfig,
+        database: AppDatabase
+    ): SyncResult {
+        if (!syncConfig.syncBookshelf && !syncConfig.syncBookProgress) {
+            return SyncResult(skippedReason = "已关闭书架和阅读进度同步")
+        }
+        val serverBooks = serverApi.getBookshelf()
+        val failures = mutableListOf<String>()
+        val skippedBooks = mutableListOf<String>()
+        val supported = serverBooks.filter { book ->
+            val reason = book.variableMap["readerV1UnsupportedReason"]
+            if (!reason.isNullOrBlank()) skippedBooks += "《${book.name}》：$reason"
+            reason.isNullOrBlank()
+        }
+        val progressBooks = if (syncConfig.syncBookshelf) supported else {
+            supported.filter { database.bookDao.has(it.bookUrl) }
+        }
+        // Shelf metadata never downloads manifests or chapter bodies. A failed progress
+        // request still allows metadata to be refreshed and is reported as a failure.
+        val progress = if (syncConfig.syncBookProgress && progressBooks.isNotEmpty()) {
+            try {
+                serverApi.getProgressRecords(progressBooks.map { it.bookUrl })
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                failures += "读取 Reader 阅读进度失败：${error.localizedMessage}"
+                null
+            }
+        } else null
+        var uploaded = 0
+        var downloaded = 0
+        var updated = 0
+        for (serverBook in supported) {
+            currentCoroutineContext().ensureActive()
+            var changed = false
+            try {
+                val localBook = database.bookDao.getBook(serverBook.bookUrl)
+                val rawProgress = progress?.get(serverBook.bookUrl)
+                if (localBook == null) {
+                    if (!syncConfig.syncBookshelf) continue
+                    requireNoTitleConflict(serverBook, database)
+                    val imported = if (rawProgress != null && rawProgress.updatedAt > 0) {
+                        try {
+                            serverApi.resolveProgress(serverBook, rawProgress)
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (error: Exception) {
+                            failures += "《${serverBook.name}》进度未同步：${error.localizedMessage}"
+                            serverBook
                         }
-                    }
-                }
-                
-                // 检查服务器书源（找出本地没有的）
-                for (serverSource in serverSources) {
-                    if (!localSourceMap.containsKey(serverSource.bookSourceUrl)) {
-                        toDownload.add(serverSource)
-                    }
-                }
-                
-                currentCoroutineContext().ensureActive()
-                
-                // 上传书源
-                if (toUpload.isNotEmpty()) {
-                    if (serverApi.saveBookSources(toUpload)) {
-                        uploaded = toUpload.size
-                    }
-                }
-                
-                // 下载书源
-                if (toDownload.isNotEmpty()) {
-                    for (source in toDownload) {
-                        currentCoroutineContext().ensureActive()
-                        val existingSource = appDb.bookSourceDao.getBookSource(source.bookSourceUrl)
-                        if (existingSource != null) {
-                            appDb.bookSourceDao.update(source)
-                            updated++
-                        } else {
-                            appDb.bookSourceDao.insert(source)
-                            downloaded++
+                    } else serverBook
+                    imported.syncTime = System.currentTimeMillis()
+                    // REPLACE could otherwise delete a book imported or renamed while the
+                    // remote progress was being resolved. Recheck both keys atomically.
+                    val inserted = database.runInTransaction(java.util.concurrent.Callable {
+                        if (database.bookDao.has(imported.bookUrl)) false else {
+                            requireNoTitleConflict(imported, database)
+                            database.bookDao.insert(imported)
+                            true
                         }
+                    })
+                    if (inserted) downloaded++
+                    continue
+                }
+                if (syncConfig.syncBookshelf && readerMetadataChanged(localBook, serverBook)) {
+                    changed = database.runInTransaction(java.util.concurrent.Callable {
+                        // Custom variables may have changed since the loop read localBook.
+                        // Re-read and merge under the same write transaction.
+                        val current = database.bookDao.getBook(serverBook.bookUrl) ?: return@Callable 0
+                        database.bookDao.updateReaderMetadata(
+                            serverBook.bookUrl, serverBook.intro, serverBook.coverUrl,
+                            serverBook.kind, serverBook.originName, serverBook.type,
+                            serverBook.totalChapterNum, ReaderBookDisplay.mergeVariables(current, serverBook),
+                            System.currentTimeMillis()
+                        )
+                    }) > 0
+                }
+                if (progress != null) {
+                    if (rawProgress != null && rawProgress.updatedAt > localBook.durChapterTime) {
+                        val resolved = serverApi.resolveProgress(localBook.copy(variable = serverBook.variable), rawProgress)
+                        // Resolving may involve slow network IO. The SQL guard compares the
+                        // current row again so reading on this device always wins if newer.
+                        changed = database.bookDao.applyReaderProgress(
+                            resolved.bookUrl, resolved.durChapterIndex, resolved.durChapterPos,
+                            resolved.durChapterTitle, resolved.durChapterTime, resolved.totalChapterNum, System.currentTimeMillis()
+                        ) > 0 || changed
+                    } else if (localBook.durChapterTime > (rawProgress?.updatedAt ?: 0L)) {
+                        uploadProgress(serverApi, localBook, database)
+                        uploaded++
                     }
                 }
-                
-                // 保存token
-                val (token, expireTime) = serverApi.getTokenInfo()
-                saveTokenInfo(token, expireTime)
-                
-                AppLog.put("书源同步完成: 上传 $uploaded, 下载 $downloaded, 更新 $updated")
-                SyncResult(uploaded, downloaded, updated)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                AppLog.put("同步 Reader 书籍失败: ${error.message}", error)
+                failures += "《${serverBook.name}》同步失败：${error.localizedMessage}"
+            } finally {
+                if (changed) updated++
+            }
+        }
+        var groupsCreated = 0
+        var groupedBooks = 0
+        if (syncConfig.syncBookshelf) {
+            val importer = ReaderGroupImporter(database)
+            val unavailable = linkedSetOf<String>()
+            for (serverBook in supported) {
+                currentCoroutineContext().ensureActive()
+                try {
+                    val result = importer.importBook(serverBook)
+                    groupsCreated += result.created
+                    if (result.grouped) groupedBooks++
+                    unavailable += result.unavailable
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    failures += "《${serverBook.name}》分组导入失败：${error.localizedMessage}"
+                }
+            }
+            if (unavailable.isNotEmpty()) {
+                failures += "分组容量不足，${unavailable.size} 个系列或标签未导入：" +
+                    unavailable.take(5).joinToString("、") + if (unavailable.size > 5) "等" else ""
+            }
+        }
+        val (token, expireTime) = serverApi.getTokenInfo()
+        saveTokenInfo(token, expireTime, serverApi)
+        return SyncResult(
+            uploaded, downloaded, updated, failures = failures, skippedBooks = skippedBooks,
+            groupsCreated = groupsCreated, groupedBooks = groupedBooks,
+            skippedReason = if (supported.isEmpty() && skippedBooks.isNotEmpty()) "书架仅含当前客户端暂不支持的格式" else null
+        )
+    }
+
+    private fun requireNoTitleConflict(book: Book, database: AppDatabase) {
+        val conflict = database.bookDao.getBook(book.name, book.author)
+        if (conflict != null && conflict.bookUrl != book.bookUrl) {
+            throw NoStackTraceException("《${book.name}》与本地同名书冲突，已保留本地书；请先处理同名书再同步")
+        }
+    }
+
+    private fun readerMetadataChanged(local: Book, server: Book): Boolean =
+        local.intro != server.intro || local.coverUrl != server.coverUrl ||
+            local.kind != server.kind || local.originName != server.originName ||
+            local.type != server.type || local.origin != BookType.readerServerLocalTag ||
+            (server.totalChapterNum > 0 && local.totalChapterNum != server.totalChapterNum) ||
+            !ReaderBookDisplay.sameMetadata(local, server)
+
+    private fun requireSaved(saved: Boolean, message: String) {
+        if (!saved) throw NoStackTraceException(message)
+    }
+
+    private suspend fun <T> syncCatching(action: suspend () -> T): Result<T> {
+        return try {
+            Result.success(action())
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
+    }
+
+    /** Upload a stable snapshot; acknowledge only its timestamp in the current database row. */
+    suspend fun uploadBookProgress(book: Book): Result<Boolean> = withContext(Dispatchers.IO) {
+        syncCatching {
+            if (!NetworkUtils.isAvailable() || config?.syncBookProgress != true) return@syncCatching false
+            val serverApi = api ?: return@syncCatching false
+            if (!book.bookUrl.startsWith("reader-v1://")) return@syncCatching false
+            uploadProgress(serverApi, book)
+            val (token, expireTime) = serverApi.getTokenInfo()
+            saveTokenInfo(token, expireTime, serverApi)
+            true
+        }
+    }
+
+    private suspend fun uploadProgress(
+        serverApi: ReaderServerApi, book: Book, database: AppDatabase = appDb
+    ): Boolean =
+        uploadReaderProgress(
+            book,
+            upload = { serverApi.saveBookProgress(it) },
+            markSynced = { url, readTime, syncedAt ->
+                database.bookDao.markReaderProgressSynced(url, readTime, syncedAt)
+            }
+        )
+
+    /** Return a newer remote position for the reader's existing confirmation flow. */
+    suspend fun syncBookProgress(book: Book): Result<Book?> = withContext(Dispatchers.IO) {
+        syncCatching {
+            if (!NetworkUtils.isAvailable() || config?.syncBookProgress != true) return@syncCatching null
+            val serverApi = api ?: return@syncCatching null
+            val snapshot = book.copy()
+            if (!snapshot.bookUrl.startsWith("reader-v1://")) return@syncCatching null
+            val remote = serverApi.getBookProgress(snapshot)
+            val newer = remote?.takeIf { it.durChapterTime > snapshot.durChapterTime }
+            if (newer == null && snapshot.durChapterTime > (remote?.durChapterTime ?: 0L)) {
+                uploadProgress(serverApi, snapshot)
+            }
+            val (token, expireTime) = serverApi.getTokenInfo()
+            saveTokenInfo(token, expireTime, serverApi)
+            // A newer document-level timestamp carries no new position to confirm.
+            newer?.takeUnless {
+                it.durChapterIndex == snapshot.durChapterIndex && it.durChapterPos == snapshot.durChapterPos
             }
         }
     }
-    
-    /**
-     * 同步书籍分组
-     * 双向同步：合并分组列表，服务器优先
-     */
-    suspend fun syncBookGroups(): Result<SyncResult> {
-        return withContext(Dispatchers.IO) {
-            kotlin.runCatching {
-                if (!NetworkUtils.isAvailable()) {
-                    throw NoStackTraceException("网络不可用")
+
+    /** Only supported server work is included, so local-only features never emit skip notices. */
+    suspend fun syncAll(): Result<ReaderServerSyncReport> = withContext(Dispatchers.IO) {
+        syncCatching {
+            val name = "书架 / 分组 / 阅读进度"
+            val items = mutableListOf<ReaderServerSyncItem>()
+            syncBookshelf().fold(onSuccess = { result ->
+                items += result.toReportItem(name)
+                if (result.skippedBooks.isNotEmpty()) {
+                    items += ReaderServerSyncItem.skipped("未支持的书籍", result.skippedBooks.joinToString("；"))
                 }
-                val serverApi = api ?: throw NoStackTraceException("服务器未配置")
-                
-                currentCoroutineContext().ensureActive()
-                
-                // 获取服务器分组
-                val serverGroups = serverApi.getBookGroups()
-                val serverGroupMap = serverGroups.associateBy { it.groupId }
-                
-                // 获取本地分组（只获取用户自定义分组，groupId > 0）
-                val localGroups = appDb.bookGroupDao.all.filter { it.groupId > 0 }
-                val localGroupMap = localGroups.associateBy { it.groupId }
-                
-                var uploaded = 0
-                var downloaded = 0
-                var updated = 0
-                
-                // 先处理服务器分组（服务器优先，下载/更新本地）
-                for (serverGroup in serverGroups) {
-                    if (serverGroup.groupId > 0) {
-                        val localGroup = localGroupMap[serverGroup.groupId]
-                        if (localGroup == null) {
-                            // 本地没有，添加到本地
-                            appDb.bookGroupDao.insert(serverGroup)
-                            downloaded++
-                        } else {
-                            // 本地有，用服务器的更新本地
-                            if (localGroup.groupName != serverGroup.groupName ||
-                                localGroup.order != serverGroup.order) {
-                                // 用服务器的 groupName 和 order 更新本地，保留本地独有的字段
-                                localGroup.groupName = serverGroup.groupName
-                                localGroup.order = serverGroup.order
-                                appDb.bookGroupDao.update(localGroup)
-                                updated++
-                            }
-                        }
-                    }
-                }
-                
-                // 再处理本地独有的分组（上传到服务器）
-                for (localGroup in localGroups) {
-                    if (!serverGroupMap.containsKey(localGroup.groupId)) {
-                        // 服务器没有，上传
-                        if (serverApi.saveBookGroup(localGroup)) {
-                            uploaded++
-                        }
-                    }
-                }
-                
-                // 保存token
-                val (token, expireTime) = serverApi.getTokenInfo()
-                saveTokenInfo(token, expireTime)
-                
-                AppLog.put("分组同步完成: 上传 $uploaded, 下载 $downloaded, 更新 $updated")
-                SyncResult(uploaded, downloaded, updated)
-            }
+            }, onFailure = { error ->
+                if (error is CancellationException) throw error
+                AppLog.put("同步$name 失败: ${error.message}", error)
+                items += ReaderServerSyncItem.failed(name, error.localizedMessage ?: "未知错误")
+            })
+            ReaderServerSyncReport(items)
         }
     }
-    
-    /**
-     * 同步书架
-     * 双向同步：合并书架，阅读进度取较新的
-     */
-    suspend fun syncBookshelf(): Result<SyncResult> {
-        return withContext(Dispatchers.IO) {
-            kotlin.runCatching {
-                if (!NetworkUtils.isAvailable()) {
-                    throw NoStackTraceException("网络不可用")
-                }
-                val serverApi = api ?: throw NoStackTraceException("服务器未配置")
-                if (config?.syncBookshelf != true) {
-                    return@runCatching SyncResult(0, 0, 0)
-                }
-                
-                currentCoroutineContext().ensureActive()
-                
-                // 获取服务器书架
-                val serverBooks = serverApi.getBookshelf()
-                val serverBookMap = serverBooks.associateBy { "${it.name}_${it.author}" }
-                
-                // 获取本地书架
-                val localBooks = appDb.bookDao.all
-                val localBookMap = localBooks.associateBy { "${it.name}_${it.author}" }
-                
-                var uploaded = 0
-                var downloaded = 0
-                var updated = 0
-                
-                // 检查本地书籍
-                for (localBook in localBooks) {
-                    currentCoroutineContext().ensureActive()
-                    val key = "${localBook.name}_${localBook.author}"
-                    val serverBook = serverBookMap[key]
-                    
-                    if (serverBook == null) {
-                        // 服务器没有，上传
-                        if (serverApi.saveBook(localBook)) {
-                            uploaded++
-                        }
-                    } else {
-                        // 都有，先检查是否需要修复服务器本地书籍的 origin 和 bookUrl
-                        var needUpdate = false
-                        var needUpload = false
-                        
-                        if (serverBook.bookUrl.startsWith("storage/")) {
-                            // 服务器本地书籍，确保 origin 和 bookUrl 正确
-                            if (localBook.origin != BookType.readerServerLocalTag) {
-                                localBook.origin = BookType.readerServerLocalTag
-                                needUpdate = true
-                            }
-                            // 如果 bookUrl 被修改过（不是 storage/ 开头），恢复为服务器的 bookUrl
-                            if (!localBook.bookUrl.startsWith("storage/")) {
-                                localBook.bookUrl = serverBook.bookUrl
-                                needUpdate = true
-                            }
-                        }
-                        
-                        // 同步分组（group 字段）
-                        if (localBook.group == 0L && serverBook.group != 0L) {
-                            // 本地没分组，服务器有分组，使用服务器的
-                            localBook.group = serverBook.group
-                            needUpdate = true
-                        } else if (localBook.group != 0L && serverBook.group == 0L) {
-                            // 本地有分组，服务器没分组，上传本地的
-                            needUpload = true
-                        } else if (localBook.group != serverBook.group && localBook.group != 0L) {
-                            // 都有分组但不同，以本地为准上传
-                            needUpload = true
-                        }
-                        
-                        // 比较进度
-                        if (shouldUpdateProgress(localBook, serverBook)) {
-                            // 服务器进度更新，更新本地
-                            val keepLocalChapterPos = serverBook.durChapterIndex == localBook.durChapterIndex &&
-                                    serverBook.durChapterPos == 0 &&
-                                    localBook.durChapterPos > 0
-                            localBook.durChapterIndex = serverBook.durChapterIndex
-                            if (!keepLocalChapterPos) {
-                                localBook.durChapterPos = serverBook.durChapterPos
-                            }
-                            localBook.durChapterTitle = serverBook.durChapterTitle
-                            localBook.durChapterTime = serverBook.durChapterTime
-                            localBook.syncTime = System.currentTimeMillis()
-                            appDb.bookDao.update(localBook)
-                            updated++
-                        } else if (localBook.durChapterTime > serverBook.durChapterTime || needUpload) {
-                            // 本地进度更新或需要上传分组，上传
-                            if (serverApi.saveBook(localBook)) {
-                                uploaded++
-                            }
-                        } else if (needUpdate) {
-                            // origin、bookUrl 或 group 被修复，需要更新数据库
-                            localBook.syncTime = System.currentTimeMillis()
-                            appDb.bookDao.update(localBook)
-                            updated++
-                        }
-                    }
-                }
-                
-                // 检查服务器书籍（找出本地没有的）
-                for (serverBook in serverBooks) {
-                    currentCoroutineContext().ensureActive()
-                    val key = "${serverBook.name}_${serverBook.author}"
-                    if (!localBookMap.containsKey(key)) {
-                        // 本地没有，添加到本地
-                        serverBook.syncTime = System.currentTimeMillis()
-                        // 标记服务器本地书籍，使用专门的 origin 标记
-                        if (serverBook.bookUrl.startsWith("storage/")) {
-                            serverBook.origin = BookType.readerServerLocalTag
-                        }
-                        appDb.bookDao.insert(serverBook)
-                        downloaded++
-                    }
-                }
-                
-                // 保存token
-                val (token, expireTime) = serverApi.getTokenInfo()
-                saveTokenInfo(token, expireTime)
-                
-                AppLog.put("书架同步完成: 上传 $uploaded, 下载 $downloaded, 更新 $updated")
-                SyncResult(uploaded, downloaded, updated)
-            }
-        }
-    }
-    
-    /**
-     * 判断是否应该用服务器进度更新本地
-     * 只以 durChapterTime（最近阅读时间）为准，时间更新的一方代表用户当前的真实阅读位置。
-     * 不能用章节索引/位置判断，因为用户可能回头重读较早的章节。
-     */
-    private fun shouldUpdateProgress(local: Book, server: Book): Boolean {
-        return server.durChapterTime > local.durChapterTime
-    }
-    
-    /**
-     * 上传阅读进度
-     * 通过 saveBookProgress 接口发送 bookUrl + chapterIndex 给服务器
-     */
-    suspend fun uploadBookProgress(book: Book): Result<Boolean> {
-        return withContext(Dispatchers.IO) {
-            kotlin.runCatching {
-                if (!NetworkUtils.isAvailable()) {
-                    return@runCatching false
-                }
-                val serverApi = api ?: return@runCatching false
-                if (config?.syncBookProgress != true) {
-                    return@runCatching false
-                }
-                
-                val result = serverApi.saveBookProgress(book.bookUrl, book.durChapterIndex)
-                
-                if (result) {
-                    book.syncTime = System.currentTimeMillis()
-                    appDb.bookDao.update(book)
-                }
-                
-                // 保存token
-                val (token, expireTime) = serverApi.getTokenInfo()
-                saveTokenInfo(token, expireTime)
-                
-                result
-            }
-        }
-    }
-    
-    /**
-     * 上传阅读进度
-     * 通过 saveBookProgress 接口发送 bookUrl + chapterIndex 给服务器
-     */
-    suspend fun uploadBookProgress(bookUrl: String, chapterIndex: Int): Result<Boolean> {
-        return withContext(Dispatchers.IO) {
-            kotlin.runCatching {
-                if (!NetworkUtils.isAvailable()) {
-                    return@runCatching false
-                }
-                val serverApi = api ?: return@runCatching false
-                if (config?.syncBookProgress != true) {
-                    return@runCatching false
-                }
-                
-                val result = serverApi.saveBookProgress(bookUrl, chapterIndex)
-                
-                // 保存token
-                val (token, expireTime) = serverApi.getTokenInfo()
-                saveTokenInfo(token, expireTime)
-                
-                result
-            }
-        }
-    }
-    
-    /**
-     * 同步订阅源
-     */
-    suspend fun syncRssSources(): Result<SyncResult> {
-        return withContext(Dispatchers.IO) {
-            kotlin.runCatching {
-                if (!NetworkUtils.isAvailable()) {
-                    throw NoStackTraceException("网络不可用")
-                }
-                val serverApi = api ?: throw NoStackTraceException("服务器未配置")
-                if (config?.syncRssSource != true) {
-                    return@runCatching SyncResult(0, 0, 0)
-                }
-                
-                currentCoroutineContext().ensureActive()
-                
-                // 获取服务器订阅源
-                val serverSources = serverApi.getRssSources()
-                val serverSourceMap = serverSources.associateBy { it.sourceUrl }
-                
-                // 获取本地订阅源
-                val localSources = appDb.rssSourceDao.all
-                val localSourceMap = localSources.associateBy { it.sourceUrl }
-                
-                var uploaded = 0
-                var downloaded = 0
-                var updated = 0
-                
-                val toUpload = mutableListOf<RssSource>()
-                val toDownload = mutableListOf<RssSource>()
-                
-                // 检查本地订阅源
-                for (localSource in localSources) {
-                    val serverSource = serverSourceMap[localSource.sourceUrl]
-                    if (serverSource == null) {
-                        toUpload.add(localSource)
-                    }
-                }
-                
-                // 检查服务器订阅源
-                for (serverSource in serverSources) {
-                    if (!localSourceMap.containsKey(serverSource.sourceUrl)) {
-                        toDownload.add(serverSource)
-                    }
-                }
-                
-                currentCoroutineContext().ensureActive()
-                
-                // 上传订阅源
-                if (toUpload.isNotEmpty()) {
-                    if (serverApi.saveRssSources(toUpload)) {
-                        uploaded = toUpload.size
-                    }
-                }
-                
-                // 下载订阅源
-                for (source in toDownload) {
-                    currentCoroutineContext().ensureActive()
-                    appDb.rssSourceDao.insert(source)
-                    downloaded++
-                }
-                
-                // 保存token
-                val (token, expireTime) = serverApi.getTokenInfo()
-                saveTokenInfo(token, expireTime)
-                
-                AppLog.put("订阅源同步完成: 上传 $uploaded, 下载 $downloaded, 更新 $updated")
-                SyncResult(uploaded, downloaded, updated)
-            }
-        }
-    }
-    
-    /**
-     * 执行全部同步
-     */
-    suspend fun syncAll(): Result<Map<String, SyncResult>> {
-        return withContext(Dispatchers.IO) {
-            kotlin.runCatching {
-                if (!NetworkUtils.isAvailable()) {
-                    throw NoStackTraceException("网络不可用")
-                }
-                if (!isOk) {
-                    throw NoStackTraceException("服务器未配置")
-                }
-                
-                val results = mutableMapOf<String, SyncResult>()
-                
-                // 同步分组（在同步书架之前，确保分组信息已就位）
-                if (config?.syncBookGroup != false) {
-                    syncBookGroups().onSuccess {
-                        results["bookGroup"] = it
-                    }.onFailure {
-                        AppLog.put("同步分组失败: ${it.message}", it)
-                    }
-                    
-                    currentCoroutineContext().ensureActive()
-                }
-                
-                // 同步书源
-                syncBookSources().onSuccess {
-                    results["bookSource"] = it
-                }.onFailure {
-                    AppLog.put("同步书源失败: ${it.message}", it)
-                }
-                
-                currentCoroutineContext().ensureActive()
-                
-                // 同步书架
-                syncBookshelf().onSuccess {
-                    results["bookshelf"] = it
-                }.onFailure {
-                    AppLog.put("同步书架失败: ${it.message}", it)
-                }
-                
-                currentCoroutineContext().ensureActive()
-                
-                // 同步订阅源
-                syncRssSources().onSuccess {
-                    results["rssSource"] = it
-                }.onFailure {
-                    AppLog.put("同步订阅源失败: ${it.message}", it)
-                }
-                
-                results
-            }
-        }
-    }
-    
-    /**
-     * 判断书籍是否为服务器上的本地存储书籍
-     * 服务器本地书籍的识别方式：
-     * - 优先检查 origin 是否为 BookType.readerServerLocalTag（新方式，不受 bookUrl 修改影响）
-     * - 兼容检查 bookUrl 是否以 storage/ 开头（旧方式，兼容已同步但 origin 未更新的书籍）
-     * 
-     * 所有服务器本地书籍（TXT、EPUB、PDF、CBZ 等）统一通过 API 获取章节
-     */
+
+    /** Keep previously imported remote entries distinct from files on this device. */
     fun isServerLocalBook(book: Book): Boolean {
-        // 优先使用 origin 标记判断（不受 bookUrl 修改影响）
         if (book.origin == BookType.readerServerLocalTag) {
             return true
         }
-        // 兼容已同步但 origin 未更新的书籍
-        return book.bookUrl.startsWith("storage/")
+        // Recognizing old stored identities does not enable the removed reader3 transport.
+        return book.bookUrl.startsWith("storage/") || book.bookUrl.startsWith("reader-v1://")
     }
     
     /**
@@ -643,46 +377,62 @@ object ReaderServerSync {
      */
     suspend fun deleteBook(book: Book): Result<Boolean> {
         return withContext(Dispatchers.IO) {
-            kotlin.runCatching {
+            syncCatching {
                 if (!NetworkUtils.isAvailable()) {
                     throw NoStackTraceException("网络不可用")
                 }
                 val serverApi = api ?: throw NoStackTraceException("服务器未配置")
-                serverApi.deleteBook(book)
+                serverApi.deleteBook(book).also { requireSaved(it, "删除服务器书籍失败") }
             }
         }
     }
     
-    /**
-     * 获取章节列表
-     */
-    suspend fun getChapterList(bookUrl: String): Result<List<io.legado.app.data.entities.BookChapter>> {
-        return withContext(Dispatchers.IO) {
-            kotlin.runCatching {
-                if (!NetworkUtils.isAvailable()) {
-                    throw NoStackTraceException("网络不可用")
+    /** Download only to a temporary file; the PDF cache validates and promotes it. */
+    suspend fun downloadBookDocument(bookUrl: String, target: File): Result<Unit> = withContext(Dispatchers.IO) {
+        syncCatching {
+            initConfig()
+            if (!NetworkUtils.isAvailable()) throw NoStackTraceException("网络不可用，PDF 尚未离线缓存")
+            val serverApi = api ?: throw NoStackTraceException("服务器未配置")
+            serverApi.downloadBookDocument(bookUrl, target)
+            val (token, expireTime) = serverApi.getTokenInfo()
+            saveTokenInfo(token, expireTime, serverApi)
+        }
+    }
+
+    /** Cached PDFs can generate their directory without a network or configured server. */
+    suspend fun getChapterList(bookUrl: String): Result<List<io.legado.app.data.entities.BookChapter>> =
+        withContext(Dispatchers.IO) {
+            syncCatching {
+                val pdf = appDb.bookDao.getBook(bookUrl)?.takeIf(ReaderServerPdf::isPdf)
+                if (pdf != null) {
+                    ReaderServerPdf.ensureDownloaded(pdf)
+                    return@syncCatching PdfFile.getChapterList(pdf)
                 }
+                if (!NetworkUtils.isAvailable()) throw NoStackTraceException("网络不可用")
                 val serverApi = api ?: throw NoStackTraceException("服务器未配置")
                 serverApi.getChapterList(bookUrl)
             }
         }
-    }
-    
-    /**
-     * 获取章节内容
-     */
-    suspend fun getBookContent(bookUrl: String, chapterIndex: Int): Result<String> {
-        return withContext(Dispatchers.IO) {
-            kotlin.runCatching {
-                if (!NetworkUtils.isAvailable()) {
-                    throw NoStackTraceException("网络不可用")
+
+    suspend fun getBookContent(bookUrl: String, chapterIndex: Int, chapterUrl: String? = null): Result<String> =
+        withContext(Dispatchers.IO) {
+            syncCatching {
+                val pdf = appDb.bookDao.getBook(bookUrl)?.takeIf(ReaderServerPdf::isPdf)
+                if (pdf != null) {
+                    if (chapterIndex < 0) throw NoStackTraceException("PDF 页码超出范围")
+                    ReaderServerPdf.ensureDownloaded(pdf)
+                    val chapter = io.legado.app.data.entities.BookChapter(
+                        bookUrl = bookUrl, index = chapterIndex, url = "reader-pdf:$chapterIndex"
+                    )
+                    return@syncCatching PdfFile.getContent(pdf, chapter)?.takeIf { it.isNotBlank() }
+                        ?: throw NoStackTraceException("PDF 页码超出范围")
                 }
+                if (!NetworkUtils.isAvailable()) throw NoStackTraceException("网络不可用")
                 val serverApi = api ?: throw NoStackTraceException("服务器未配置")
-                serverApi.getBookContent(bookUrl, chapterIndex)
+                serverApi.getBookContent(bookUrl, chapterIndex, chapterUrl)
             }
         }
-    }
-    
+
     /**
      * 获取服务器本地书籍的图片
      * @param bookUrl 书籍的 bookUrl
@@ -691,7 +441,7 @@ object ReaderServerSync {
      */
     suspend fun getBookImage(bookUrl: String, imageSrc: String): Result<ByteArray> {
         return withContext(Dispatchers.IO) {
-            kotlin.runCatching {
+            syncCatching {
                 if (!NetworkUtils.isAvailable()) {
                     throw NoStackTraceException("网络不可用")
                 }
@@ -701,18 +451,50 @@ object ReaderServerSync {
         }
     }
     
+    /** Match only this configured server's protected book images, without adding tokens to URLs. */
+    fun isServerResourceUrl(url: String): Boolean {
+        val serverUrl = AppConfig.readerServerUrl ?: config?.url ?: return false
+        return ReaderServerResourceUrl.isImageResource(serverUrl, url)
+    }
+
+    suspend fun getResourceImage(url: String): Result<ByteArray> {
+        return withContext(Dispatchers.IO) {
+            syncCatching {
+                initConfig()
+                if (!isServerResourceUrl(url)) throw NoStackTraceException("图片地址不属于当前 Reader Server")
+                if (!NetworkUtils.isAvailable()) throw NoStackTraceException("网络不可用")
+                val serverApi = api ?: throw NoStackTraceException("服务器未配置")
+                serverApi.getResourceImage(url)
+            }
+        }
+    }
+
     /**
      * 同步结果
      */
     data class SyncResult(
-        val uploaded: Int,
-        val downloaded: Int,
-        val updated: Int
+        val uploaded: Int = 0,
+        val downloaded: Int = 0,
+        val updated: Int = 0,
+        val skippedReason: String? = null,
+        val failures: List<String> = emptyList(),
+        val skippedBooks: List<String> = emptyList(),
+        val groupsCreated: Int = 0,
+        val groupedBooks: Int = 0
     ) {
-        val total: Int get() = uploaded + downloaded + updated
+        val total: Int get() = uploaded + downloaded + updated + groupsCreated + groupedBooks
+
+        internal fun toReportItem(name: String): ReaderServerSyncItem = when {
+            skippedReason != null -> ReaderServerSyncItem.skipped(name, skippedReason)
+            failures.isNotEmpty() -> ReaderServerSyncItem.failed(
+                name, "$this；${failures.joinToString("；")}", total > 0
+            )
+            else -> ReaderServerSyncItem.completed(name, toString())
+        }
         
         override fun toString(): String {
-            return "上传: $uploaded, 下载: $downloaded, 更新: $updated"
+            return "上传: $uploaded, 下载: $downloaded, 更新: $updated" +
+                if (groupsCreated > 0 || groupedBooks > 0) "；新增分组: $groupsCreated，归类书籍: $groupedBooks" else ""
         }
     }
 }

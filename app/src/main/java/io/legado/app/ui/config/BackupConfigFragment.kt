@@ -20,6 +20,7 @@ import io.legado.app.constant.PreferKey
 import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.AppWebDav
 import io.legado.app.help.ReaderServerSync
+import io.legado.app.help.ReaderServerSyncReport
 import io.legado.app.help.config.AppConfig
 import io.legado.app.help.config.LocalConfig
 import io.legado.app.help.coroutine.Coroutine
@@ -49,6 +50,7 @@ import io.legado.app.utils.showDialogFragment
 import io.legado.app.utils.showHelp
 import io.legado.app.utils.toEditable
 import io.legado.app.utils.toastOnUi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.Dispatchers.Main
 import kotlinx.coroutines.Job
@@ -564,23 +566,24 @@ class BackupConfigFragment : PreferenceFragment(),
                 val result = withContext(IO) {
                     ReaderServerSync.syncAll()
                 }
-                result.onSuccess { results ->
-                    val summary = buildString {
-                        results["bookSource"]?.let {
-                            appendLine("书源: ${it}")
-                        }
-                        results["bookshelf"]?.let {
-                            appendLine("书架: ${it}")
-                        }
-                        results["rssSource"]?.let {
-                            appendLine("订阅源: ${it}")
-                        }
+                result.onSuccess { report ->
+                    val title = when (report.outcome) {
+                        ReaderServerSyncReport.Outcome.SUCCESS -> getString(R.string.reader_server_sync_success)
+                        ReaderServerSyncReport.Outcome.PARTIAL_FAILURE -> "Reader Server 部分同步失败"
+                        ReaderServerSyncReport.Outcome.FAILURE -> getString(R.string.reader_server_sync_fail)
+                        ReaderServerSyncReport.Outcome.SKIPPED -> "Reader Server 未执行同步"
                     }
-                    appCtx.toastOnUi(getString(R.string.reader_server_sync_success) + "\n$summary")
+                    // The full report can include unsupported features or several book conflicts.
+                    // A dialog keeps those details available instead of truncating them in a toast.
+                    requireContext().alert(title = title, message = report.summary()) {
+                        okButton()
+                    }
                 }.onFailure { e ->
                     AppLog.put("Reader Server 同步失败: ${e.localizedMessage}", e)
                     appCtx.toastOnUi(getString(R.string.reader_server_sync_fail) + "\n${e.localizedMessage}")
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 AppLog.put("Reader Server 同步失败: ${e.localizedMessage}", e)
                 appCtx.toastOnUi(getString(R.string.reader_server_sync_fail) + "\n${e.localizedMessage}")

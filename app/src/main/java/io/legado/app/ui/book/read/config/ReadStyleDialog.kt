@@ -135,6 +135,7 @@ class ReadStyleDialog : BaseDialogFragment(R.layout.dialog_read_book_style),
         }
         rgPageAnim.setOnCheckedChangeListener { _, checkedId ->
             ReadBook.book?.setPageAnim(-1)
+            ReadBook.saveSettings()
             ReadBookConfig.pageAnim = binding.rgPageAnim.getIndexById(checkedId)
             callBack?.upPageAnim()
             ReadBook.loadContent(false)

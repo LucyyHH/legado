@@ -50,7 +50,7 @@ class BookAdapter(context: Context, val callBack: CallBack) :
     ) {
         binding.apply {
             root.setBackgroundColor(context.backgroundColor)
-            tvName.text = item.name
+            tvName.text = item.getDisplayName()
             tvAuthor.text = item.author
             tvAuthor.visibility = if (item.author.isEmpty()) View.GONE else View.VISIBLE
             tvGroupS.text = getGroupName(item.group)

@@ -15,6 +15,8 @@ import io.legado.app.help.config.AppConfig
 import io.legado.app.help.ReaderServerSync
 import io.legado.app.model.analyzeRule.AnalyzeUrl
 import io.legado.app.model.localBook.LocalBook
+import io.legado.app.model.localBook.PdfFile
+import io.legado.app.model.ImageProvider
 import io.legado.app.utils.ArchiveUtils
 import io.legado.app.utils.FileUtils
 import io.legado.app.utils.ImageUtils
@@ -64,12 +66,16 @@ object BookHelp {
     val cachePath = FileUtils.getPath(downloadDir, cacheFolderName)
 
     fun clearCache() {
+        PdfFile.release()
+        ReaderServerPdf.forgetAll()
         FileUtils.delete(
             FileUtils.getPath(downloadDir, cacheFolderName)
         )
     }
 
     fun clearCache(book: Book) {
+        if (ReaderServerPdf.isPdf(book)) PdfFile.release(book.bookUrl)
+        ReaderServerPdf.forget(book)
         val filePath = FileUtils.getPath(downloadDir, cacheFolderName, book.getFolderName())
         FileUtils.delete(filePath)
     }
@@ -96,6 +102,7 @@ object BookHelp {
      */
     suspend fun clearInvalidCache() {
         withContext(IO) {
+            ReaderServerPdf.forgetAll()
             val bookFolderNames = hashSetOf<String>()
             val originNames = hashSetOf<String>()
             appDb.bookDao.all.forEach {
@@ -206,14 +213,15 @@ object BookHelp {
     }
 
     suspend fun saveImages(
-        bookSource: BookSource,
+        bookSource: BookSource?,
         book: Book,
         bookChapter: BookChapter,
         content: String,
-        concurrency: Int = AppConfig.threadCount
+        concurrency: Int = AppConfig.threadCount,
+        throwOnError: Boolean = false
     ) = coroutineScope {
         flowImages(bookChapter, content).onEachParallel(concurrency) { mSrc ->
-            saveImage(bookSource, book, mSrc, bookChapter)
+            saveImage(bookSource, book, mSrc, bookChapter, throwOnError)
         }.collect()
     }
 
@@ -221,15 +229,21 @@ object BookHelp {
         bookSource: BookSource?,
         book: Book,
         src: String,
-        chapter: BookChapter? = null
+        chapter: BookChapter? = null,
+        throwOnError: Boolean = false
     ) {
         if (isImageExist(book, src)) {
             return
         }
         
+        if (ReaderServerPdf.isPdf(book)) {
+            ImageProvider.cacheImage(book, src, bookSource)
+            return
+        }
+
         // 服务器本地书籍：通过 API 下载图片
         if (ReaderServerSync.isServerLocalBook(book)) {
-            saveServerBookImage(book, src, chapter)
+            saveServerBookImage(book, src, chapter, throwOnError)
             return
         }
         
@@ -263,6 +277,7 @@ object BookHelp {
             coroutineContext.ensureActive()
             val msg = "${book.name} ${chapter?.title} 图片 $src 下载失败\n${e.localizedMessage}"
             AppLog.put(msg, e)
+            if (throwOnError) throw e
         } finally {
             downloadImages.remove(src)
             mutex.unlock()
@@ -276,7 +291,8 @@ object BookHelp {
     private suspend fun saveServerBookImage(
         book: Book,
         src: String,
-        chapter: BookChapter? = null
+        chapter: BookChapter? = null,
+        throwOnError: Boolean = false
     ) {
         val mutex = synchronized(this) {
             downloadImages.getOrPut(src) { Mutex() }
@@ -286,18 +302,20 @@ object BookHelp {
             if (isImageExist(book, src)) {
                 return
             }
+            ReaderServerSync.initConfig()
             // 通过 ReaderServerSync 获取图片字节数据
             val bytes = ReaderServerSync.getBookImage(book.bookUrl, src)
                 .getOrThrow()
             
             if (!checkImage(bytes)) {
-                AppLog.put("${book.name} ${chapter?.title} 图片 $src 下载错误 数据异常")
+                throw IOException("服务器返回的图片数据无效")
             }
             writeImage(book, src, bytes)
         } catch (e: Exception) {
             coroutineContext.ensureActive()
             val msg = "${book.name} ${chapter?.title} 图片 $src 下载失败\n${e.localizedMessage}"
             AppLog.put(msg, e)
+            if (throwOnError) throw e
         } finally {
             downloadImages.remove(src)
             mutex.unlock()
@@ -365,6 +383,10 @@ object BookHelp {
     }
 
     fun getChapterFiles(book: Book): HashSet<String> {
+        if (ReaderServerPdf.isPdf(book) && ReaderServerPdf.isCached(book)) {
+            return appDb.bookChapterDao.getChapterList(book.bookUrl)
+                .mapTo(hashSetOf()) { it.getFileName() }
+        }
         val fileNames = hashSetOf<String>()
         if (book.isLocalTxt) {
             return fileNames
@@ -382,6 +404,7 @@ object BookHelp {
      * 检测该章节是否下载
      */
     fun hasContent(book: Book, bookChapter: BookChapter): Boolean {
+        if (ReaderServerPdf.isPdf(book)) return ReaderServerPdf.isCached(book)
         return if (book.isLocalTxt ||
             (bookChapter.isVolume && bookChapter.url.startsWith(bookChapter.title))
         ) {
@@ -399,6 +422,7 @@ object BookHelp {
      * 检测图片是否下载
      */
     fun hasImageContent(book: Book, bookChapter: BookChapter): Boolean {
+        if (ReaderServerPdf.isPdf(book)) return ReaderServerPdf.isCached(book)
         if (!hasContent(book, bookChapter)) {
             return false
         }
@@ -408,7 +432,7 @@ object BookHelp {
         getContent(book, bookChapter)?.let {
             val matcher = AppPattern.imgPattern.matcher(it)
             while (matcher.find()) {
-                val src = matcher.group(1)!!
+                val src = NetworkUtils.getAbsoluteURL(bookChapter.url, matcher.group(1)!!)
                 val image = getImage(book, src)
                 if (!image.exists()) {
                     ret = false
@@ -441,6 +465,9 @@ object BookHelp {
      * 读取章节内容
      */
     fun getContent(book: Book, bookChapter: BookChapter): String? {
+        if (ReaderServerPdf.isPdf(book)) {
+            return if (ReaderServerPdf.isCached(book)) PdfFile.getContent(book, bookChapter) else null
+        }
         val file = downloadDir.getFile(
             cacheFolderName,
             book.getFolderName(),

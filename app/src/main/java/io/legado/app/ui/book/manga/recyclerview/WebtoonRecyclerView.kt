@@ -43,6 +43,71 @@ class WebtoonRecyclerView @JvmOverloads constructor(
     var tapListener: ((MotionEvent) -> Unit)? = null
     var longTapListener: ((MotionEvent) -> Boolean)? = null
     var disableMangaScale = false
+    var lockPageSwipeDirection = false
+    internal var pageAnimationsEnabled = true
+
+    private enum class PageSwipe { PENDING, ACCEPTED, REJECTED }
+    private var pageSwipe = PageSwipe.PENDING
+    private var pageSwipeStartX = 0f
+    private var pageSwipeStartY = 0f
+    private val pageSwipeSlop = ViewConfiguration.get(context).scaledTouchSlop
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        val action = ev.actionMasked
+        if (action == MotionEvent.ACTION_DOWN) {
+            pageSwipe = PageSwipe.PENDING
+            pageSwipeStartX = ev.x
+            pageSwipeStartY = ev.y
+        }
+        if (pageSwipe == PageSwipe.REJECTED && (ev.pointerCount > 1 || currentScale != DEFAULT_RATE)) {
+            pageSwipe = PageSwipe.ACCEPTED
+            // The rejected drag was cancelled; start a valid child stream for zoom takeover.
+            MotionEvent.obtain(ev.eventTime, ev.eventTime, MotionEvent.ACTION_DOWN,
+                ev.x, ev.y, ev.metaState).let { down ->
+                down.source = ev.source
+                super.dispatchTouchEvent(down)
+                down.recycle()
+            }
+        }
+        if (pageSwipe == PageSwipe.REJECTED) {
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                pageSwipe = PageSwipe.PENDING
+            }
+            return true
+        }
+        // Pinch/zoom dragging keeps its existing two-dimensional handling.
+        if (!lockPageSwipeDirection || currentScale != DEFAULT_RATE || ev.pointerCount > 1) {
+            pageSwipe = PageSwipe.ACCEPTED
+        }
+        if (action == MotionEvent.ACTION_MOVE && pageSwipe == PageSwipe.PENDING) {
+            val dx = abs(ev.x - pageSwipeStartX)
+            val dy = abs(ev.y - pageSwipeStartY)
+            if (maxOf(dx, dy) > pageSwipeSlop) {
+                val horizontal = layoutManager?.canScrollHorizontally() == true
+                val perpendicular = if (horizontal) dy > dx else dx > dy
+                if (perpendicular) {
+                    pageSwipe = PageSwipe.REJECTED
+                    // Cancel both paging and tap recognition before the small off-axis drift scrolls.
+                    MotionEvent.obtain(ev).let { cancel ->
+                        cancel.action = MotionEvent.ACTION_CANCEL
+                        super.dispatchTouchEvent(cancel)
+                        cancel.recycle()
+                    }
+                    return true
+                }
+                pageSwipe = PageSwipe.ACCEPTED
+            }
+        }
+        val handled = super.dispatchTouchEvent(ev)
+        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            pageSwipe = PageSwipe.PENDING
+        }
+        return handled
+    }
+
+    override fun smoothScrollBy(dx: Int, dy: Int) {
+        if (pageAnimationsEnabled) super.smoothScrollBy(dx, dy) else scrollBy(dx, dy)
+    }
 
     override fun onMeasure(widthSpec: Int, heightSpec: Int) {
         halfWidth = MeasureSpec.getSize(widthSpec) / 2

@@ -32,7 +32,7 @@ class BooksAdapterList(
         payloads: MutableList<Any>
     ) = binding.run {
         if (payloads.isEmpty()) {
-            tvName.text = item.name
+            tvName.text = item.getDisplayName()
             tvAuthor.text = item.author
             tvRead.text = item.durChapterTitle
             tvLast.text = item.latestChapterTitle
@@ -44,7 +44,7 @@ class BooksAdapterList(
                 val bundle = payloads[i] as Bundle
                 bundle.keySet().forEach {
                     when (it) {
-                        "name" -> tvName.text = item.name
+                        "name" -> tvName.text = item.getDisplayName()
                         "author" -> tvAuthor.text = item.author
                         "dur" -> tvRead.text = item.durChapterTitle
                         "last" -> tvLast.text = item.latestChapterTitle

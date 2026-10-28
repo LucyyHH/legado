@@ -11,6 +11,7 @@ import com.script.rhino.runScriptWithContext
 import io.legado.app.data.entities.BaseSource
 import io.legado.app.exception.NoStackTraceException
 import io.legado.app.help.coroutine.Coroutine
+import io.legado.app.help.ReaderServerSync
 import io.legado.app.help.http.addHeaders
 import io.legado.app.help.http.okHttpClient
 import io.legado.app.help.http.okHttpClientManga
@@ -22,6 +23,7 @@ import io.legado.app.utils.isWifiConnect
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CancellationException
 import okhttp3.Call
 import okhttp3.Request
 import okhttp3.Response
@@ -61,6 +63,24 @@ class OkHttpStreamFetcher(
         val loadOnlyWifi = options.get(OkHttpModelLoader.loadOnlyWifiOption) ?: false
         if (loadOnlyWifi && !appCtx.isWifiConnect) {
             callback.onLoadFailed(NoStackTraceException("只在wifi加载图片"))
+            return
+        }
+
+        // Keep bearer tokens out of persisted cover URLs and Glide's cache keys.
+        if (ReaderServerSync.isServerResourceUrl(url.toStringUrl())) {
+            this.callback = callback
+            Coroutine.async(coroutineScope, executeContext = IO) {
+                try {
+                    val bytes = ReaderServerSync.getResourceImage(url.toStringUrl()).getOrThrow()
+                    val input = ByteArrayInputStream(bytes)
+                    stream = input
+                    this@OkHttpStreamFetcher.callback?.onDataReady(input)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    this@OkHttpStreamFetcher.callback?.onLoadFailed(e)
+                }
+            }
             return
         }
 

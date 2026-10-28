@@ -57,7 +57,8 @@ open class MangaVH<VB : ViewBinding>(val binding: VB, private val context: Conte
         imageUrl: String,
         isHorizontal: Boolean,
         isLastImage: Boolean,
-        transformation: Transformation<Bitmap>?
+        transformation: Transformation<Bitmap>?,
+        pageBased: Boolean = false
     ) {
         mFlProgress.isVisible = true
         mLoading.isVisible = true
@@ -99,37 +100,7 @@ open class MangaVH<VB : ViewBinding>(val binding: VB, private val context: Conte
                     dataSource: DataSource,
                     isFirstResource: Boolean,
                 ): Boolean {
-                    mFlProgress.isGone = true
-                    if (!isHorizontal) {
-                        itemView.updateLayoutParams<ViewGroup.LayoutParams> {
-                            height = ViewGroup.LayoutParams.WRAP_CONTENT
-                        }
-                        mImage.updateLayoutParams<FrameLayout.LayoutParams> {
-                            gravity = Gravity.NO_GRAVITY
-                        }
-                        if (isLastImage) {
-                            mImage.updateLayoutParams<FrameLayout.LayoutParams> {
-                                height = ViewGroup.LayoutParams.WRAP_CONTENT
-                            }
-                            itemView.minimumHeight = minHeight
-                        } else {
-                            mImage.updateLayoutParams<FrameLayout.LayoutParams> {
-                                height = ViewGroup.LayoutParams.MATCH_PARENT
-                            }
-                            itemView.minimumHeight = 0
-                        }
-                        mImage.scaleType = ImageView.ScaleType.FIT_XY
-                    } else {
-                        itemView.updateLayoutParams<ViewGroup.LayoutParams> {
-                            height = ViewGroup.LayoutParams.MATCH_PARENT
-                        }
-                        itemView.minimumHeight = 0
-                        mImage.updateLayoutParams<FrameLayout.LayoutParams> {
-                            height = ViewGroup.LayoutParams.MATCH_PARENT
-                            gravity = Gravity.CENTER
-                        }
-                        mImage.scaleType = ImageView.ScaleType.FIT_CENTER
-                    }
+                    applyImageLayout(isHorizontal, isLastImage, pageBased)
                     return false
                 }
             }).into(mImage)
@@ -137,5 +108,31 @@ open class MangaVH<VB : ViewBinding>(val binding: VB, private val context: Conte
             e.printOnDebug()
         }
 
+    }
+
+    internal fun applyImageLayout(isHorizontal: Boolean, isLastImage: Boolean, pageBased: Boolean) {
+        mFlProgress.isGone = true
+        if (!isHorizontal && !pageBased) {
+            itemView.updateLayoutParams<ViewGroup.LayoutParams> {
+                height = ViewGroup.LayoutParams.WRAP_CONTENT
+            }
+            mImage.updateLayoutParams<FrameLayout.LayoutParams> {
+                gravity = Gravity.NO_GRAVITY
+                height = if (isLastImage) ViewGroup.LayoutParams.WRAP_CONTENT
+                    else ViewGroup.LayoutParams.MATCH_PARENT
+            }
+            itemView.minimumHeight = if (isLastImage) minHeight else 0
+            mImage.scaleType = ImageView.ScaleType.FIT_XY
+        } else {
+            itemView.updateLayoutParams<ViewGroup.LayoutParams> {
+                height = ViewGroup.LayoutParams.MATCH_PARENT
+            }
+            itemView.minimumHeight = 0
+            mImage.updateLayoutParams<FrameLayout.LayoutParams> {
+                height = ViewGroup.LayoutParams.MATCH_PARENT
+                gravity = Gravity.CENTER
+            }
+            mImage.scaleType = ImageView.ScaleType.FIT_CENTER
+        }
     }
 }

@@ -49,7 +49,7 @@ class BooksAdapterGrid(context: Context, callBack: CallBack) :
         RecyclerView.ViewHolder(binding.root) {
 
         fun onBind(item: Book, position: Int) = binding.run {
-            tvName.text = item.name
+            tvName.text = item.getDisplayName()
             ivCover.load(item.getDisplayCover(), item.name, item.author, false, item.origin)
             upRefresh(this, item)
         }
@@ -62,7 +62,7 @@ class BooksAdapterGrid(context: Context, callBack: CallBack) :
                     val bundle = payloads[i] as Bundle
                     bundle.keySet().forEach {
                         when (it) {
-                            "name" -> tvName.text = item.name
+                            "name" -> tvName.text = item.getDisplayName()
                             "cover" -> ivCover.load(
                                 item.getDisplayCover(),
                                 item.name,

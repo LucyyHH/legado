@@ -8,6 +8,7 @@ import androidx.core.graphics.createBitmap
 import io.legado.app.constant.AppLog
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
+import io.legado.app.help.book.ReaderServerPdf
 import io.legado.app.help.book.getLocalUri
 import io.legado.app.utils.BitmapUtils
 import io.legado.app.utils.FileUtils
@@ -25,6 +26,14 @@ class PdfFile(var book: Book) {
     companion object : BaseLocalBookParse {
         private var pFile: PdfFile? = null
 
+        private data class SourceVersion(val path: String, val length: Long, val modifiedAt: Long)
+
+        private fun sourceVersion(book: Book): SourceVersion? {
+            if (!ReaderServerPdf.isPdf(book)) return null
+            val file = ReaderServerPdf.cachedFile(book)
+            return SourceVersion(file.absolutePath, file.length(), file.lastModified())
+        }
+
         /**
          * pdf分页尺寸
          */
@@ -32,7 +41,10 @@ class PdfFile(var book: Book) {
 
         @Synchronized
         private fun getPFile(book: Book): PdfFile {
-            if (pFile == null || pFile?.book?.bookUrl != book.bookUrl) {
+            if (pFile == null || pFile?.book?.bookUrl != book.bookUrl ||
+                pFile?.sourceVersion != sourceVersion(book)
+            ) {
+                pFile?.closePdf()
                 pFile = PdfFile(book)
                 return pFile!!
             }
@@ -60,20 +72,26 @@ class PdfFile(var book: Book) {
             return getPFile(book).getImage(href)
         }
 
+        @Synchronized
+        fun release(bookUrl: String? = null) {
+            val current = pFile ?: return
+            if (bookUrl == null || current.book.bookUrl == bookUrl) {
+                current.closePdf()
+                pFile = null
+            }
+        }
+
     }
 
     /**
      *持有引用，避免被回收
      */
     private var fileDescriptor: ParcelFileDescriptor? = null
-    private var pdfRenderer: PdfRenderer? = null
-        get() {
-            if (field != null && fileDescriptor != null) {
-                return field
-            }
-            field = readPdf()
-            return field
-        }
+    private var renderer: PdfRenderer? = null
+    private var released = false
+    private val sourceVersion = sourceVersion(book)
+    private val pdfRenderer: PdfRenderer?
+        get() = if (released) null else renderer ?: readPdf()
 
     init {
         upBookCover(true)
@@ -85,28 +103,39 @@ class PdfFile(var book: Book) {
      * @return
      */
     private fun readPdf(): PdfRenderer? {
-        val uri = book.getLocalUri()
-        if (uri.isContentScheme()) {
-            fileDescriptor = appCtx.contentResolver.openFileDescriptor(uri, "r")?.also {
-                pdfRenderer = PdfRenderer(it)
-            }
+        val descriptor = if (ReaderServerPdf.isPdf(book)) {
+            val file = ReaderServerPdf.cachedFile(book)
+            if (!file.isFile) return null
+            ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
         } else {
-            fileDescriptor =
+            val uri = book.getLocalUri()
+            if (uri.isContentScheme()) {
+                appCtx.contentResolver.openFileDescriptor(uri, "r") ?: return null
+            } else {
                 ParcelFileDescriptor.open(File(uri.path!!), ParcelFileDescriptor.MODE_READ_ONLY)
-                    ?.also {
-                        pdfRenderer = PdfRenderer(it)
-                    }
+            }
         }
-        return pdfRenderer
+        return try {
+            PdfRenderer(descriptor).also {
+                fileDescriptor = descriptor
+                renderer = it
+            }
+        } catch (error: Exception) {
+            descriptor.close()
+            throw error
+        }
     }
 
-    /**
-     * 关闭pdf文件
-     *
-     */
+    /** Closing must never evaluate the lazy opener or reopen an invalid document. */
     private fun closePdf() {
-        pdfRenderer?.close()
-        fileDescriptor?.close()
+        if (released) return
+        released = true
+        val currentRenderer = renderer
+        val descriptor = fileDescriptor
+        renderer = null
+        fileDescriptor = null
+        runCatching { currentRenderer?.close() }
+        runCatching { descriptor?.close() }
     }
 
 
@@ -119,7 +148,7 @@ class PdfFile(var book: Book) {
      * @return
      */
     private fun openPdfPage(renderer: PdfRenderer, index: Int): Bitmap? {
-        if (index >= renderer.pageCount) {
+        if (index < 0 || index >= renderer.pageCount) {
             return null
         }
         return renderer.openPage(index).use { page ->
@@ -134,41 +163,26 @@ class PdfFile(var book: Book) {
 
     }
 
-    private fun getContent(chapter: BookChapter): String? =
-        if (pdfRenderer == null) {
-            null
-        } else {
-            pdfRenderer?.let { renderer ->
-
-                buildString {
-                    val start = chapter.index * PAGE_SIZE
-                    val end = ((chapter.index + 1) * PAGE_SIZE).coerceAtMost(renderer.pageCount)
-                    (start until end).forEach {
-                        append("<img src=").append('"').append(it).append('"').append(" >")
-                            .append('\n')
-                    }
-
-                }
-
+    private fun getContent(chapter: BookChapter): String? {
+        val currentRenderer = pdfRenderer ?: return null
+        val pageSize = if (ReaderServerPdf.isPdf(book)) 1 else PAGE_SIZE
+        val start = chapter.index.toLong() * pageSize
+        if (start < 0 || start >= currentRenderer.pageCount) return null
+        val end = (start + pageSize).coerceAtMost(currentRenderer.pageCount.toLong()).toInt()
+        return buildString {
+            (start.toInt() until end).forEach { page ->
+                append("<img src=\"").append(page).append("\" >\n")
             }
         }
-
+    }
 
     private fun getImage(href: String): InputStream? {
-        if (pdfRenderer == null) {
-            return null
-        }
+        val index = href.toIntOrNull() ?: return null
+        val currentRenderer = pdfRenderer ?: return null
         return try {
-            val index = href.toInt()
-            val bitmap = openPdfPage(pdfRenderer!!, index)
-            if (bitmap != null) {
-                BitmapUtils.toInputStream(bitmap)
-            } else {
-                null
-            }
-
+            openPdfPage(currentRenderer, index)?.let(BitmapUtils::toInputStream)
         } catch (_: Exception) {
-            return null
+            null
         }
     }
 
@@ -177,13 +191,18 @@ class PdfFile(var book: Book) {
 
         pdfRenderer?.let { renderer ->
             if (renderer.pageCount > 0) {
-                val chapterCount = ceil((renderer.pageCount.toDouble() / PAGE_SIZE)).toInt()
+                val readerPdf = ReaderServerPdf.isPdf(book)
+                val chapterCount = if (readerPdf) {
+                    renderer.pageCount
+                } else {
+                    ceil((renderer.pageCount.toDouble() / PAGE_SIZE)).toInt()
+                }
                 (0 until chapterCount).forEach {
                     val chapter = BookChapter()
                     chapter.index = it
                     chapter.bookUrl = book.bookUrl
-                    chapter.title = "分段_${it}"
-                    chapter.url = "pdf_${it}"
+                    chapter.title = if (readerPdf) "第${it + 1}页" else "分段_${it}"
+                    chapter.url = if (readerPdf) "reader-pdf:$it" else "pdf_$it"
                     chapterList.add(chapter)
                 }
             }

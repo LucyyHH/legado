@@ -14,71 +14,43 @@ import io.legado.app.utils.isContentScheme
 import io.legado.app.utils.isDataUrl
 import io.legado.app.utils.lifecycle
 import java.io.File
+import java.net.URI
 
 //https://bumptech.github.io/glide/doc/generatedapi.html
 //Instead of GlideApp, use com.bumptech.Glide
 @Suppress("unused")
 object ImageLoader {
 
+    /** Cached manga pages use File.toURI(), while other callers pass raw paths. */
+    internal fun localFile(path: String): File =
+        if (path.startsWith("file:")) File(URI(path)) else File(path)
+
+    private fun modelForPath(path: String?, allowDataUrl: Boolean = true): Any? = when {
+        path.isNullOrEmpty() || path.isAbsUrl() || (allowDataUrl && path.isDataUrl()) -> path
+        path.isContentScheme() -> Uri.parse(path)
+        else -> runCatching { localFile(path) }.getOrElse { path }
+    }
+
     /**
      * 自动判断path类型
      */
     fun load(context: Context, path: String?): RequestBuilder<Drawable> {
-        return when {
-            path.isNullOrEmpty() -> Glide.with(context).load(path)
-            path.isDataUrl() -> Glide.with(context).load(path)
-            path.isAbsUrl() -> Glide.with(context).load(path)
-            path.isContentScheme() -> Glide.with(context).load(Uri.parse(path))
-            else -> kotlin.runCatching {
-                Glide.with(context).load(File(path))
-            }.getOrElse {
-                Glide.with(context).load(path)
-            }
-        }
+        return Glide.with(context).load(modelForPath(path))
     }
 
     fun load(fragment: Fragment, lifecycle: Lifecycle, path: String?): RequestBuilder<Drawable> {
         val requestManager = Glide.with(fragment).lifecycle(lifecycle)
-        return when {
-            path.isNullOrEmpty() -> requestManager.load(path)
-            path.isDataUrl() -> requestManager.load(path)
-            path.isAbsUrl() -> requestManager.load(path)
-            path.isContentScheme() -> requestManager.load(Uri.parse(path))
-
-            else -> kotlin.runCatching {
-                requestManager.load(File(path))
-            }.getOrElse {
-                requestManager.load(path)
-            }
-        }
+        return requestManager.load(modelForPath(path))
     }
 
     fun loadBitmap(context: Context, path: String?): RequestBuilder<Bitmap> {
         val requestManager = Glide.with(context).`as`(Bitmap::class.java)
-        return when {
-            path.isNullOrEmpty() -> requestManager.load(path)
-            path.isDataUrl() -> requestManager.load(path)
-            path.isAbsUrl() -> requestManager.load(path)
-            path.isContentScheme() -> requestManager.load(Uri.parse(path))
-            else -> kotlin.runCatching {
-                requestManager.load(File(path))
-            }.getOrElse {
-                requestManager.load(path)
-            }
-        }
+        return requestManager.load(modelForPath(path))
     }
 
     fun loadFile(context: Context, path: String?): RequestBuilder<File> {
-        return when {
-            path.isNullOrEmpty() -> Glide.with(context).asFile().load(path)
-            path.isAbsUrl() -> Glide.with(context).asFile().load(path)
-            path.isContentScheme() -> Glide.with(context).asFile().load(Uri.parse(path))
-            else -> kotlin.runCatching {
-                Glide.with(context).asFile().load(File(path))
-            }.getOrElse {
-                Glide.with(context).asFile().load(path)
-            }
-        }
+        // File downloads historically treat data URLs as literal paths.
+        return Glide.with(context).asFile().load(modelForPath(path, allowDataUrl = false))
     }
 
     fun load(context: Context, @DrawableRes resId: Int?): RequestBuilder<Drawable> {

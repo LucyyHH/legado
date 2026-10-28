@@ -758,34 +758,16 @@ object AppConfig : SharedPreferences.OnSharedPreferenceChangeListener {
             SecurePreferences.putString(PreferKey.readerServerPassword, value)
         }
 
-    var readerServerSyncBookSource: Boolean
-        get() = appCtx.getPrefBoolean(PreferKey.readerServerSyncBookSource, true)
-        set(value) {
-            appCtx.putPrefBoolean(PreferKey.readerServerSyncBookSource, value)
-        }
-
     var readerServerSyncBookshelf: Boolean
         get() = appCtx.getPrefBoolean(PreferKey.readerServerSyncBookshelf, true)
         set(value) {
             appCtx.putPrefBoolean(PreferKey.readerServerSyncBookshelf, value)
         }
 
-    var readerServerSyncBookGroup: Boolean
-        get() = appCtx.getPrefBoolean(PreferKey.readerServerSyncBookGroup, true)
-        set(value) {
-            appCtx.putPrefBoolean(PreferKey.readerServerSyncBookGroup, value)
-        }
-
     var readerServerSyncProgress: Boolean
         get() = appCtx.getPrefBoolean(PreferKey.readerServerSyncProgress, true)
         set(value) {
             appCtx.putPrefBoolean(PreferKey.readerServerSyncProgress, value)
-        }
-
-    var readerServerSyncRssSource: Boolean
-        get() = appCtx.getPrefBoolean(PreferKey.readerServerSyncRssSource, true)
-        set(value) {
-            appCtx.putPrefBoolean(PreferKey.readerServerSyncRssSource, value)
         }
 
     var readerServerAutoSync: Boolean

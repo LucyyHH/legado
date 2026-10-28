@@ -35,13 +35,6 @@
 
         <io.legado.app.lib.prefs.SwitchPreference
             android:defaultValue="true"
-            android:key="readerServerSyncBookSource"
-            android:summary="@string/reader_server_sync_book_source_s"
-            android:title="@string/reader_server_sync_book_source"
-            app:iconSpaceReserved="false" />
-
-        <io.legado.app.lib.prefs.SwitchPreference
-            android:defaultValue="true"
             android:key="readerServerSyncBookshelf"
             android:summary="@string/reader_server_sync_bookshelf_s"
             android:title="@string/reader_server_sync_bookshelf"
@@ -49,23 +42,9 @@
 
         <io.legado.app.lib.prefs.SwitchPreference
             android:defaultValue="true"
-            android:key="readerServerSyncBookGroup"
-            android:summary="@string/reader_server_sync_book_group_s"
-            android:title="@string/reader_server_sync_book_group"
-            app:iconSpaceReserved="false" />
-
-        <io.legado.app.lib.prefs.SwitchPreference
-            android:defaultValue="true"
             android:key="readerServerSyncProgress"
             android:summary="@string/reader_server_sync_progress_s"
             android:title="@string/reader_server_sync_progress"
-            app:iconSpaceReserved="false" />
-
-        <io.legado.app.lib.prefs.SwitchPreference
-            android:defaultValue="true"
-            android:key="readerServerSyncRssSource"
-            android:summary="@string/reader_server_sync_rss_source_s"
-            android:title="@string/reader_server_sync_rss_source"
             app:iconSpaceReserved="false" />
 
         <io.legado.app.lib.prefs.SwitchPreference
